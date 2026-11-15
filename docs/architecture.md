@@ -73,6 +73,12 @@ The `attendance_events` collection is queried with MongoDB aggregation pipelines
 
 The dashboard labels the sum of `affectedStudentCount` as an affected-student event count. It is a sum of roster sizes across events, not a unique-student count or an attendance percentage. MySQL remains authoritative for identity, assignments, courses, attendance records, and percentages; MongoDB is used only for event history and event aggregation.
 
+## Outbox failure and retry verification (Stage 7E)
+
+The Stage 7E tests use in-memory MongoDB and SQL fakes; they do not require a live MongoDB service or worker timing. If MongoDB persistence fails, the dispatcher records a Mongo-stage failure and does not acknowledge the SQL row, so `deliveredAt` remains null. If MongoDB persistence succeeds but the SQL acknowledgement fails, the MongoDB event remains in place and the SQL event remains pending. A retry with the same `eventId` verifies the identical stored content, performs no second insert, and can then acknowledge SQL. Conflicting content for an existing event ID is rejected without replacing the stored document. Invalid payloads and SQL/payload identity mismatches stop before MongoDB persistence.
+
+The delivery ordering is therefore: validate SQL payload → persist or confirm the identical MongoDB event → conditionally set MySQL `deliveredAt`. The tests call the dispatcher again to model retry deterministically; the standalone worker continues to provide polling, exponential backoff, and graceful shutdown.
+
 ## Application layers
 
 - **Next.js UI:** Server-rendered student attendance summaries and faculty roster/session pages; a small Client Component handles form pending/result state.

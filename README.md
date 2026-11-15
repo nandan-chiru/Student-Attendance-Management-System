@@ -98,6 +98,10 @@ Faculty scope comes from MySQL `OfferingFaculty` assignments before MongoDB is q
 
 The affected-student event count is the sum of roster sizes recorded on events. It counts student-event occurrences and is not a count of unique students.
 
+## Outbox failure and retry guarantees (Stage 7E)
+
+The outbox unit tests simulate MongoDB and SQL failures without requiring MongoDB. A MongoDB persistence failure leaves `OutboxEvent.deliveredAt` null. SQL acknowledgement occurs only after MongoDB confirms event persistence. If that SQL acknowledgement then fails, the MongoDB document is retained and the SQL row remains pending; retrying the same `eventId` accepts the identical document without inserting a duplicate, then can mark SQL delivered. Conflicting content under an existing event ID is rejected and is not overwritten. Invalid or mismatched payloads are rejected before MongoDB is called. These tests exercise dispatcher retries deterministically rather than waiting for the worker's polling timer.
+
 ## Project structure
 
 ```text
@@ -123,4 +127,4 @@ tests/integration/        Optional isolated MySQL integrity/transaction tests
 
 ## Current stage boundary
 
-Stage 7B adds the transactional SQL outbox record to attendance finalization. Stage 7C adds a standalone delivery worker that writes immutable event documents to MongoDB and retries safely using the unique event ID. Stage 7D adds MongoDB aggregation and server-side admin/faculty audit pages. Attendance records, risk calculations, and percentages remain MySQL-backed.
+Stage 7B adds the transactional SQL outbox record to attendance finalization. Stage 7C adds a standalone delivery worker that writes immutable event documents to MongoDB and retries safely using the unique event ID. Stage 7D adds MongoDB aggregation and server-side admin/faculty audit pages. Stage 7E tests failure and retry guarantees for MongoDB persistence, SQL acknowledgement, idempotency, conflicts, and payload validation. Attendance records, risk calculations, and percentages remain MySQL-backed.

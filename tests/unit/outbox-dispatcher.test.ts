@@ -48,6 +48,63 @@ function setup(options: {
   return { outbox, eventStore, calls };
 }
 
+function createFailureHarness(options: {
+  payload?: unknown;
+  failMongoAttempts?: number;
+  failSqlAcknowledgements?: number;
+} = {}) {
+  let deliveredAt: Date | null = null;
+  let mongoFailuresLeft = options.failMongoAttempts ?? 0;
+  let sqlFailuresLeft = options.failSqlAcknowledgements ?? 0;
+  let mongoPersistenceAttempts = 0;
+  let mongoInsertCount = 0;
+  let sqlAcknowledgementAttempts = 0;
+  const mongoDocuments = new Map<string, AttendanceSessionFinalizedEvent & { _id: string }>();
+  const pendingRow = row(options.payload === undefined ? {} : { payload: options.payload });
+
+  const collection: MongoAttendanceEventCollection = {
+    async updateOne(filter, update) {
+      const existing = mongoDocuments.get(filter.eventId);
+      if (existing) return { upsertedCount: 0 };
+      mongoInsertCount += 1;
+      mongoDocuments.set(filter.eventId, { ...update.$setOnInsert, _id: `mongo-${mongoInsertCount}` });
+      return { upsertedCount: 1 };
+    },
+    async findOne(filter) { return mongoDocuments.get(filter.eventId) ?? null; },
+  };
+  const outbox: OutboxRepository = {
+    async listPending(limit) { return deliveredAt === null ? [pendingRow].slice(0, limit) : []; },
+    async markDeliveredIfPending(_id, at) {
+      sqlAcknowledgementAttempts += 1;
+      if (sqlFailuresLeft > 0) {
+        sqlFailuresLeft -= 1;
+        throw new Error("Simulated SQL acknowledgement failure");
+      }
+      deliveredAt = at;
+      return true;
+    },
+  };
+  const eventStore: AttendanceEventStore = {
+    async ensureIndexes() {},
+    async persist(value) {
+      mongoPersistenceAttempts += 1;
+      if (mongoFailuresLeft > 0) {
+        mongoFailuresLeft -= 1;
+        throw new Error("Simulated MongoDB failure");
+      }
+      return persistAttendanceEvent(collection, value);
+    },
+  };
+
+  return {
+    outbox,
+    eventStore,
+    mongoDocuments,
+    sqlState: () => ({ deliveredAt }),
+    attempts: () => ({ mongoPersistenceAttempts, mongoInsertCount, sqlAcknowledgementAttempts }),
+  };
+}
+
 test("successfully persists a validated event before marking SQL delivered", async () => {
   const harness = setup();
   const result = await dispatchPendingOutboxBatch({ ...harness, now: () => new Date("2026-11-15T11:00:00.000Z") });
@@ -146,4 +203,86 @@ test("Mongo event persistence confirms a duplicate-key race by reading the ident
     async findOne() { return { ...event, _id: "winning-worker" }; },
   };
   assert.equal(await persistAttendanceEvent(collection, event), "already_present");
+});
+
+test("Mongo persistence failure reports failure and leaves SQL pending for retry", async () => {
+  const harness = createFailureHarness({ failMongoAttempts: 1 });
+  const first = await dispatchPendingOutboxBatch(harness);
+  assert.equal(first.failures[0]?.stage, "mongo");
+  assert.equal(first.delivered, 0);
+  assert.equal(harness.sqlState().deliveredAt, null);
+  assert.equal(harness.mongoDocuments.size, 0);
+  assert.equal(harness.attempts().sqlAcknowledgementAttempts, 0);
+});
+
+test("SQL acknowledgement failure leaves Mongo event present and SQL pending", async () => {
+  const harness = createFailureHarness({ failSqlAcknowledgements: 1 });
+  const result = await dispatchPendingOutboxBatch(harness);
+  assert.equal(result.failures[0]?.stage, "mysql");
+  assert.equal(harness.mongoDocuments.size, 1);
+  assert.equal(harness.mongoDocuments.get(event.eventId)?.eventId, event.eventId);
+  assert.equal(harness.sqlState().deliveredAt, null);
+  assert.equal(harness.attempts().mongoInsertCount, 1);
+});
+
+test("retry after SQL acknowledgement failure accepts identical Mongo event and delivers SQL once", async () => {
+  const harness = createFailureHarness({ failSqlAcknowledgements: 1 });
+  const first = await dispatchPendingOutboxBatch(harness);
+  assert.equal(first.failures[0]?.stage, "mysql");
+  assert.equal(harness.sqlState().deliveredAt, null);
+
+  const retry = await dispatchPendingOutboxBatch(harness);
+  assert.equal(retry.delivered, 1);
+  assert.deepEqual(retry.failures, []);
+  assert.equal(harness.mongoDocuments.size, 1);
+  assert.equal(harness.attempts().mongoPersistenceAttempts, 2);
+  assert.equal(harness.attempts().mongoInsertCount, 1);
+  assert.ok(harness.sqlState().deliveredAt instanceof Date);
+
+  const afterDelivery = await dispatchPendingOutboxBatch(harness);
+  assert.equal(afterDelivery.read, 0);
+  assert.equal(harness.mongoDocuments.size, 1);
+});
+
+test("transient Mongo failure followed by retry delivers SQL and inserts exactly one event", async () => {
+  const harness = createFailureHarness({ failMongoAttempts: 1 });
+  const first = await dispatchPendingOutboxBatch(harness);
+  assert.equal(first.failures[0]?.stage, "mongo");
+  assert.equal(harness.sqlState().deliveredAt, null);
+  assert.equal(harness.mongoDocuments.size, 0);
+
+  const retry = await dispatchPendingOutboxBatch(harness);
+  assert.equal(retry.delivered, 1);
+  assert.equal(harness.sqlState().deliveredAt instanceof Date, true);
+  assert.equal(harness.mongoDocuments.size, 1);
+  assert.equal(harness.attempts().mongoInsertCount, 1);
+});
+
+test("same eventId with conflicting Mongo content is rejected without overwrite or SQL acknowledgement", async () => {
+  const harness = createFailureHarness({ payload: { ...event, affectedStudentCount: 99 } });
+  harness.mongoDocuments.set(event.eventId, { ...event, _id: "original-document" });
+  const before = { ...harness.mongoDocuments.get(event.eventId) };
+
+  const result = await dispatchPendingOutboxBatch(harness);
+  assert.equal(result.failures[0]?.stage, "mongo");
+  assert.deepEqual(harness.mongoDocuments.get(event.eventId), before);
+  assert.equal(harness.mongoDocuments.size, 1);
+  assert.equal(harness.sqlState().deliveredAt, null);
+  assert.equal(harness.attempts().sqlAcknowledgementAttempts, 0);
+});
+
+test("invalid and mismatched outbox payloads remain pending without Mongo persistence", async () => {
+  for (const payload of [
+    { invalid: true },
+    { ...event, eventId: "f1c37fe4-a94e-4c76-bf95-c03bb6e661fb" },
+    { ...event, eventType: "UNSUPPORTED_EVENT" },
+  ]) {
+    const harness = createFailureHarness({ payload });
+    const result = await dispatchPendingOutboxBatch(harness);
+    assert.equal(result.failures[0]?.stage, "validation");
+    assert.equal(harness.mongoDocuments.size, 0);
+    assert.equal(harness.attempts().mongoPersistenceAttempts, 0);
+    assert.equal(harness.sqlState().deliveredAt, null);
+    assert.equal(harness.attempts().sqlAcknowledgementAttempts, 0);
+  }
 });
