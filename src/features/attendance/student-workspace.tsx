@@ -1,5 +1,6 @@
 import { getStudentAttendanceOverview } from "@/services/attendance/student";
 import { RiskSummary } from "@/features/attendance/risk-summary";
+import { AttendanceTrend, MetricCards } from "@/features/analytics/dashboard-visuals";
 
 function displayDate(date: Date) {
   return new Intl.DateTimeFormat("en", {
@@ -13,10 +14,20 @@ function percentage(value: number) {
 }
 
 export async function StudentAttendanceWorkspace() {
-  const { courses, overall, overallRisk } = await getStudentAttendanceOverview();
+  const { courses, overall, overallRisk, dashboard, trend } = await getStudentAttendanceOverview();
 
   return (
     <div className="mt-8 space-y-8">
+      <MetricCards metrics={[
+        { label: "Overall attendance", value: percentage(dashboard.overallAttendancePercent), detail: "Counted finalized classes" },
+        { label: "Classes attended", value: dashboard.attended },
+        { label: "Classes missed", value: dashboard.missed },
+        { label: "Courses with data", value: dashboard.coursesWithAttendanceData },
+        { label: "Courses at risk", value: dashboard.atRiskCourseCount },
+        { label: "Courses critical", value: dashboard.criticalCourseCount },
+        { label: "Courses without data", value: dashboard.noDataCourseCount },
+      ]} />
+
       <section className="rounded-xl border border-blue-100 bg-blue-50 p-5">
         <h2 className="font-semibold text-slate-950">Overall attendance</h2>
         <p className="mt-2 text-3xl font-bold text-blue-800">{percentage(overall.percentage)}</p>
@@ -28,6 +39,8 @@ export async function StudentAttendanceWorkspace() {
           <RiskSummary risk={overallRisk} />
         </div>
       </section>
+
+      <AttendanceTrend title="Attendance trend across your courses" points={trend} />
 
       <section>
         <h2 className="text-xl font-semibold text-slate-950">Course attendance</h2>

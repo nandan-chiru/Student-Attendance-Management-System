@@ -87,6 +87,16 @@ The delivery ordering is therefore: validate SQL payload → persist or confirm 
 - **Data access layer:** `src/dal/attendance/` contains scoped Prisma queries and transaction primitives. Faculty queries receive the authenticated faculty profile ID; student queries receive the profile derived from the session.
 - **Validation:** Zod validates session IDs, calendar dates, statuses, and the submitted roster on the server. Client constraints are only usability aids.
 
+## Role dashboards and attendance analytics (Stage 8)
+
+`/student` uses the server-side student attendance service, which derives the student profile from the authenticated session and queries only that profile's enrollments and finalized attendance history. It presents overall/course counts, derived percentages, the existing risk/recovery classification, no-data courses, and a daily attendance trend. No student identifier is accepted from dashboard filters.
+
+`/faculty` analytics resolve assignments through MySQL `OfferingFaculty` using the authenticated faculty profile. Optional offering and term filters are intersected with this assignment result before aggregate queries run. Date range filters affect the trend only; attendance rates and risk counts continue to use all finalized marks and the established risk service. The existing faculty attendance workspace and its per-offering authorization remain in place.
+
+`/admin` shows institution-wide entity counts and the overall rate across all finalized MySQL marks, plus active-term offering comparisons and risk counts. Recent finalized sessions are read from MySQL. Per-offering student attendance and date trends are computed with parameterized SQL aggregates; entity/session totals use Prisma count/groupBy operations. Trend queries return a bounded, chronologically ordered set of the latest twelve dates. Percentage calculation remains derived: PRESENT / (PRESENT + ABSENT), with EXCUSED excluded; zero counted marks yield 0% and `NO_DATA` according to the existing risk rules.
+
+The dashboards are server-rendered, and their service methods enforce role checks before returning scoped data. Tables provide text equivalents for visual comparisons/trends. MongoDB remains limited to the separate Stage 7 audit/event history; it is not used for attendance percentages, risk classification, or relational dashboard totals.
+
 ## Security and configuration
 
 Database URLs and the authentication secret are read from environment variables. The repository includes `.env.example` with variable names/placeholders only; actual credentials must remain in local or deployment secret configuration and must not be committed.

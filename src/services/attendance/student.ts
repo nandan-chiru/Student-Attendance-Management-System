@@ -2,6 +2,7 @@ import { requireStudent } from "@/auth/authorization";
 import { listStudentEnrollments } from "@/dal/attendance/queries";
 import { calculateAttendance } from "@/services/attendance/calculations";
 import { analyzeAttendanceRisk, DEFAULT_ATTENDANCE_THRESHOLD_PERCENT } from "@/services/attendance/risk";
+import { buildStudentAttendanceTrend, summarizeStudentDashboard } from "@/services/analytics/dashboard-metrics";
 
 export async function getStudentAttendanceOverview() {
   const student = await requireStudent();
@@ -50,5 +51,8 @@ export async function getStudentAttendanceOverview() {
     requiredPercent: DEFAULT_ATTENDANCE_THRESHOLD_PERCENT,
   });
 
-  return { courses, overall, overallRisk };
+  const dashboard = summarizeStudentDashboard({ overall, courses });
+  const trend = buildStudentAttendanceTrend(courses);
+
+  return { courses, overall, overallRisk, dashboard, trend };
 }

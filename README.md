@@ -102,6 +102,14 @@ The affected-student event count is the sum of roster sizes recorded on events. 
 
 The outbox unit tests simulate MongoDB and SQL failures without requiring MongoDB. A MongoDB persistence failure leaves `OutboxEvent.deliveredAt` null. SQL acknowledgement occurs only after MongoDB confirms event persistence. If that SQL acknowledgement then fails, the MongoDB document is retained and the SQL row remains pending; retrying the same `eventId` accepts the identical document without inserting a duplicate, then can mark SQL delivered. Conflicting content under an existing event ID is rejected and is not overwritten. Invalid or mismatched payloads are rejected before MongoDB is called. These tests exercise dispatcher retries deterministically rather than waiting for the worker's polling timer.
 
+## Attendance analytics dashboards (Stage 8)
+
+The `/student`, `/faculty`, and `/admin` role pages provide attendance dashboards. Student metrics are derived only from the signed-in student's MySQL enrollments and finalized records. The student overview includes overall and per-course attendance, attended/missed counts, risk/recovery status, no-data courses, and a daily trend.
+
+Faculty analytics are scoped on the server by MySQL `OfferingFaculty` assignments. Offering and term filters are intersected with those assigned offerings; a browser-supplied ID cannot broaden the scope. Date filters apply to the attendance trend. Attendance and risk summaries continue to use all finalized marks so the established attendance policy remains consistent. Admin entity and overall attendance totals use MySQL; course/offering comparisons and risk counts focus on active-term offerings. Recent finalized sessions are included as a compact activity table.
+
+Relational analytics use Prisma counts/grouping and parameterized MySQL aggregates to summarize attendance by offering, student, and date. Percentages remain derived and use the shared attendance calculation; PRESENT and ABSENT count in the denominator while EXCUSED does not. Existing risk and recovery services remain authoritative. Accessible tables accompany the trend visualization. MongoDB continues to serve the distinct Stage 7 audit/event pages and does not supply attendance totals or dashboard percentages.
+
 ## Project structure
 
 ```text
