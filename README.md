@@ -1,6 +1,6 @@
 # Student Attendance Management System
 
-A DBMS Level 3 project built on Next.js App Router and TypeScript. **Stage 2** establishes the MySQL relational schema, Prisma migration, development seed, and database documentation. Application features are not implemented yet.
+A DBMS Level 3 Student Attendance Management System built on Next.js App Router and TypeScript. Stage 4 establishes credentials-based authentication and server-side role protection on top of the existing MySQL/Prisma foundation. Attendance workflows, analytics, and dashboards are not implemented yet.
 
 ## Technology stack
 
@@ -9,6 +9,8 @@ A DBMS Level 3 project built on Next.js App Router and TypeScript. **Stage 2** e
 - Prisma's MariaDB driver adapter for Prisma Client
 - MongoDB Node.js driver reserved for a later attendance event/audit stage
 - Git and GitHub
+
+Authentication uses Auth.js Credentials with JWT-backed sessions. Passwords are verified against the existing bcrypt hashes; plaintext passwords are never stored.
 
 ## Database architecture
 
@@ -31,7 +33,7 @@ Copy `.env.example` to `.env` and set local values. The file is ignored by Git.
 ```dotenv
 DATABASE_URL="mysql://<user>:<password>@localhost:3306/student_attendance"
 MONGODB_URI=
-AUTH_SECRET=
+AUTH_SECRET=<generate-a-random-secret>
 DEMO_SEED_PASSWORD=
 ```
 
@@ -55,12 +57,22 @@ The migration source is `prisma/migrations/20261115120000_init_attendance_manage
 
 The seed creates `admin@attendance-demo.test`, `faculty.one@attendance-demo.test`, `faculty.two@attendance-demo.test`, and `student.1@attendance-demo.test` through `student.5@attendance-demo.test`. They all use the local-only `DEMO_SEED_PASSWORD` value. The examples are fictional development data, not production accounts.
 
+## Authentication foundation
+
+The sign-in page is `/login`. Auth.js validates credentials against the existing MySQL `User` records and uses the stored bcrypt password hash. An eight-hour JWT session is held in an HTTP-only, same-site cookie managed by Auth.js; Auth.js enables the secure-cookie flag for HTTPS deployments. `AUTH_SECRET` is required in the local `.env`; generate a unique random value for each environment. The `.env` file is ignored by Git.
+
+The database roles are `STUDENT`, `FACULTY`, and `ADMIN`. Successful sign-in routes users to `/student`, `/faculty`, or `/admin`. These are protected placeholder areas. Server-rendered pages use centralized role guards, and Route Handlers can use the same helpers. Student profile access is derived from the authenticated user; a caller-supplied profile ID must match. Faculty offering access checks the `OfferingFaculty` relation in MySQL. Admin-only operations require the `ADMIN` role. Authorization is enforced on the server because browser-side hiding is not a security boundary and can be bypassed by direct requests.
+
+`GET /api/auth/me` returns only the current user's `id`, `email`, and `role`, or `401` without a session. It never returns a password hash. No user-active flag exists in the current schema; account enabled/disabled state is therefore not currently represented.
+
+For local development, configure `DATABASE_URL` and `AUTH_SECRET` in `.env`, then run `npm run dev` and open `/login`. The existing seeded development accounts can sign in with the local `DEMO_SEED_PASSWORD` used when seeding; do not put that value in source control or share it. Focused authorization tests run with `npm test`.
+
 ## Project structure
 
 ```text
 src/app/                 Next.js pages and Route Handlers
 src/lib/db/              Prisma and MongoDB connection helpers
-src/auth/                 Reserved for later authentication
+src/auth/                 Credentials auth, session and authorization helpers
 src/dal/                  Reserved for data access modules
 src/services/             Reserved for business services
 src/validation/           Reserved for request validation
@@ -71,9 +83,9 @@ prisma/seed.ts            Idempotent development/demo seed
 docs/schema.md            Tables, keys, constraints, indexes, and rules
 docs/er-diagram.md        Mermaid ER diagram source
 docs/queries.sql          Representative DBMS SQL examples
-tests/                    Reserved for unit, integration, and E2E tests
+tests/unit/               Authentication and authorization policy tests
 ```
 
 ## Current stage boundary
 
-Stage 2 implements the relational database foundation only. Authentication, dashboards, attendance APIs/UI, analytics UI, the recovery planner, MongoDB event processing, and background workers are not implemented.
+Stage 4 implements authentication and the server-side authorization foundation on top of the Stage 2 relational database. Attendance entry, attendance dashboards, analytics UI, the recovery planner, MongoDB event processing, and background workers are not implemented.

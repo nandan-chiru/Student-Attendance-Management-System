@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Student Attendance Management System",
-  description: "A DBMS Level 3 project foundation.",
+  description: "A DBMS Level 3 student attendance management project.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

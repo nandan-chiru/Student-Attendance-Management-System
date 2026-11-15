@@ -8,6 +8,9 @@ export default function Home() {
         <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">
           Student Attendance Management System
         </h1>
+        <a href="/login" className="mt-8 inline-flex rounded-lg bg-blue-700 px-5 py-3 font-semibold text-white hover:bg-blue-800">
+          Sign in
+        </a>
       </div>
     </main>
   );

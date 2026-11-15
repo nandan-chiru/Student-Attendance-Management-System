@@ -46,8 +46,18 @@ MySQL remains authoritative for current attendance state. When the event pipelin
 
 ## Security and configuration
 
-Database URLs and the future authentication secret are read from environment variables. The repository includes `.env.example` with variable names only; actual credentials must remain in local or deployment secret configuration and must not be committed.
+Database URLs and the authentication secret are read from environment variables. The repository includes `.env.example` with variable names/placeholders only; actual credentials must remain in local or deployment secret configuration and must not be committed.
+
+## Authentication and authorization (Stage 4)
+
+- Auth.js Credentials verifies email/password against the existing MySQL `User` record and bcrypt hash. Password hashes are selected only during credential verification and are not put in the session or returned by APIs.
+- Sessions use Auth.js JWT strategy with an eight-hour lifetime and Auth.js-managed HTTP-only, same-site cookies; Auth.js enables the secure-cookie flag for HTTPS deployments. `AUTH_SECRET` is required and remains server-only.
+- The authenticated identity is re-resolved from MySQL on protected server requests. This supplies the current role and profile identifiers and avoids relying on a role supplied by the browser.
+- Roles are `STUDENT`, `FACULTY`, and `ADMIN`. Role pages are `/student`, `/faculty`, and `/admin`; each page calls a server-side role guard. Unauthenticated requests redirect to `/login`; authenticated wrong-role requests go to `/forbidden`.
+- Centralized server helpers expose authenticated-user, role, student, faculty, assigned-offering, and admin checks. Student access uses the profile ID linked to the session user's MySQL record. A requested student profile ID must match that derived profile. Faculty access to an offering is checked against the `OfferingFaculty` relation in MySQL. Admin operations require `ADMIN`.
+- `GET /api/auth/me` returns only `id`, `email`, and `role`, or `401`. Future Route Handlers and services must enforce the same server-side checks; hiding UI elements alone is not authorization.
+- The current schema has no enabled/disabled user attribute, so an account-status gate is not represented.
 
 ## Current implementation boundary
 
-The current stage includes the Next.js foundation, a minimal landing page, a JSON health endpoint, the Prisma MySQL relational schema, migration source, demo seed, and schema documentation. Authentication, dashboards, attendance workflows, analytics, and database event processing are intentionally deferred.
+The current implementation includes the Next.js foundation, health endpoint, Prisma MySQL relational schema and seed, and Stage 4 credentials authentication, protected role placeholders, and focused authorization tests. Attendance workflows, dashboards, analytics, and MongoDB event processing remain deferred.
