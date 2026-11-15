@@ -7,7 +7,7 @@ A DBMS Level 3 Student Attendance Management System built on Next.js App Router 
 - Next.js App Router, React, TypeScript, and Tailwind CSS
 - MySQL 8 with Prisma ORM
 - Prisma's MariaDB driver adapter for Prisma Client
-- MongoDB Node.js driver reserved for a later attendance event/audit stage
+- MongoDB Node.js driver for the optional attendance event/audit foundation
 - Git and GitHub
 
 Authentication uses Auth.js Credentials with JWT-backed sessions. Passwords are verified against the existing bcrypt hashes; plaintext passwords are never stored.
@@ -16,7 +16,7 @@ Authentication uses Auth.js Credentials with JWT-backed sessions. Passwords are 
 
 MySQL is the primary and canonical relational source of truth for users and profiles, academic terms, courses and offerings, enrollments, attendance sessions, attendance records, and the SQL outbox. Attendance percentages will be calculated only from attendance records in finalized sessions.
 
-MongoDB integration is intentionally deferred. Later, it may store flexible attendance activity/audit event documents and support event-based aggregation/reporting. It will not be a source of attendance totals. The current `OutboxEvent` model is only the SQL side of a future delivery workflow; no event processor or MongoDB collection is implemented.
+MySQL remains the system of record. MongoDB is the secondary NoSQL store planned for immutable attendance event/audit history and future event-based aggregation/reporting. Attendance sessions, attendance records, and percentages are not duplicated there. The MongoDB driver and event contract are present, but no collection, event writes, SQL outbox workflow, or synchronization worker is implemented yet. The existing Prisma `OutboxEvent` model is not active in attendance submission.
 
 ## Local prerequisites
 
@@ -24,7 +24,7 @@ MongoDB integration is intentionally deferred. Later, it may store flexible atte
 - MySQL 8.0.16 or newer (the migration includes enforced `CHECK` constraints)
 - Git
 
-MongoDB is not required for this stage. Attendance state and percentages are stored/calculated from MySQL only.
+MongoDB is optional for normal application use. Configure `MONGODB_URI` only if you want to run the MongoDB health check. Attendance state and percentages are stored/calculated from MySQL only.
 
 ## Environment configuration
 
@@ -68,6 +68,8 @@ The database roles are `STUDENT`, `FACULTY`, and `ADMIN`. Successful sign-in rou
 
 For local development, configure `DATABASE_URL` and `AUTH_SECRET` in `.env`, then run `npm run dev` and open `/login`. The existing seeded development accounts can sign in with the local `DEMO_SEED_PASSWORD` used when seeding; do not put that value in source control or share it. Focused authorization tests run with `npm test`.
 
+MongoDB uses the optional server-only `MONGODB_URI` variable. The shared connection targets the `student_attendance` database and does not create a collection on connection. `GET /api/health/mongodb` checks connectivity when configured and reports `not_configured` when the URI is absent. MongoDB health is separate from `/api/health`; a MongoDB outage does not block login or MySQL attendance operations.
+
 ## Attendance workflow (Stage 5)
 
 Faculty see only offerings assigned through `OfferingFaculty`. For an offering, the active enrollment roster is loaded from MySQL. Faculty select a valid date within the offering term and mark every active enrollee PRESENT, ABSENT, or EXCUSED. One serializable MySQL transaction creates the session as `FINALIZED` and inserts the complete roster of attendance records. Duplicate date/topic sessions and roster mismatches are rejected. Finalized history is read-only in this stage.
@@ -108,4 +110,4 @@ tests/integration/        Optional isolated MySQL integrity/transaction tests
 
 ## Current stage boundary
 
-Stage 6 implements attendance entry, finalized session history, student attendance summaries, server-side role-scoped attendance risk analysis, and recovery guidance. Broader analytics dashboards, MongoDB event processing, the outbox worker, and admin attendance tools remain out of scope.
+Stage 7A adds the optional MongoDB connection foundation, health check, and validated event contract. Stage 6 attendance entry, finalized session history, student attendance summaries, server-side role-scoped attendance risk analysis, and recovery guidance remain MySQL-backed. MongoDB event writes, the Stage 7B SQL outbox publisher/worker, broader analytics dashboards, and admin attendance tools remain out of scope.

@@ -26,15 +26,19 @@ MySQL is the canonical relational database for users and profiles, academic term
 
 Attendance percentages and shortage analysis will be calculated from canonical MySQL attendance records. MongoDB will not store a competing attendance total.
 
-### MongoDB
+### MongoDB (Stage 7A foundation)
 
-MongoDB will later hold flexible attendance activity and audit event documents, such as attendance changes and their actor, timestamp, source, and correction context. Its document model fits event records whose metadata may evolve independently of the relational attendance schema. MongoDB aggregation will support event-based audit and activity reports.
+MongoDB is the secondary NoSQL database intended for immutable attendance event/audit history and later event-based aggregation. MySQL remains the system of record for every user, course, enrollment, attendance session, attendance record, and attendance calculation. MongoDB will not duplicate relational attendance rows or hold attendance totals.
 
-MongoDB is not connected to a collection or event pipeline. Its use is deferred to a later stage. The SQL `OutboxEvent` table is only the future delivery boundary; no MongoDB writes or workers exist yet.
+The official MongoDB Node.js driver is reused through `src/lib/db/mongodb.ts`, with a shared client promise cached on `globalThis` for Next.js development reloads. The database name is `student_attendance`; the connection is optional and reads `MONGODB_URI` only on the server. Missing configuration and connection failures are handled without logging connection details. `GET /api/health/mongodb` reports `not_configured`, `ok`, or `unavailable`; the existing `/api/health` and MySQL attendance flows do not depend on MongoDB.
+
+The future `attendance_events` collection is append-only and will enforce a unique index on `eventId` for idempotent identity. The Stage 7A contract defines `ATTENDANCE_SESSION_FINALIZED` with stable MySQL `sessionId`, `offeringId`, and `facultyId`, an event time, affected student count, and small schema-version/session-date metadata. It intentionally excludes names, emails, attendance rows, credentials, and other unnecessary personal data. No collection or index is created in this stage, and no events are written.
+
+The existing SQL `OutboxEvent` model is not used by Stage 7A. Future Stage 7B will implement the SQL outbox pattern: record an event in the same MySQL transaction as the canonical attendance change, then publish it to MongoDB with idempotent delivery. MongoDB failure must not roll back or block ordinary MySQL attendance operations.
 
 ## Consistency boundary
 
-MySQL remains authoritative for current attendance state. When the event pipeline is implemented, attendance changes and an event-outbox record should be committed together in a MySQL transaction. A separate delivery process can copy outbox events to MongoDB and safely retry using a unique event identifier. This avoids treating two independent database writes as one atomic transaction.
+MySQL remains authoritative for current attendance state. In Stage 7B, attendance changes and an event-outbox record will be committed together in a MySQL transaction. A separate delivery process can copy outbox events to MongoDB and safely retry using a unique event identifier. This avoids treating two independent database writes as one atomic transaction.
 
 ## Application layers
 
