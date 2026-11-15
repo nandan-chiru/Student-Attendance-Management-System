@@ -1,4 +1,5 @@
 import { Prisma } from "@/generated/prisma/client";
+import type { AttendanceStatus } from "@/generated/prisma/enums";
 import { prisma } from "@/lib/db/prisma";
 import {
   findActiveEnrollmentStudentIds,
@@ -10,6 +11,8 @@ import {
   listFacultyOfferings,
 } from "@/dal/attendance/queries";
 import { requireFaculty, requireFacultyOffering } from "@/auth/authorization";
+import { calculateAttendance } from "@/services/attendance/calculations";
+import { analyzeAttendanceRisk } from "@/services/attendance/risk";
 import { ForbiddenError } from "@/auth/policies";
 import {
   AttendanceConflictError,
@@ -23,7 +26,35 @@ import {
 
 export async function getFacultyAttendanceWorkspace() {
   const faculty = await requireFaculty();
-  return listFacultyOfferings(faculty.facultyProfileId);
+  const offerings = await listFacultyOfferings(faculty.facultyProfileId);
+
+  return offerings.map((offering) => {
+    const marksByStudent = new Map<string, AttendanceStatus[]>();
+    for (const enrollment of offering.enrollments) marksByStudent.set(enrollment.student.id, []);
+    for (const session of offering.attendanceSessions) {
+      if (session.status !== "FINALIZED") continue;
+      for (const record of session.records) {
+        marksByStudent.get(record.studentId)?.push(record.status);
+      }
+    }
+
+    const riskStudents = offering.enrollments.map(({ student }) => {
+      const attendance = calculateAttendance(marksByStudent.get(student.id) ?? []);
+      return {
+        id: student.id,
+        name: student.user.name,
+        registrationNumber: student.registrationNumber,
+        attendance,
+        risk: analyzeAttendanceRisk({
+          attended: attendance.attended,
+          held: attendance.held,
+          requiredPercent: Number(offering.attendanceThreshold),
+        }),
+      };
+    });
+
+    return { ...offering, riskStudents };
+  });
 }
 
 export async function getFacultyAttendanceSession(sessionId: string) {

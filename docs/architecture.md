@@ -58,8 +58,18 @@ Database URLs and the authentication secret are read from environment variables.
 - `GET /api/auth/me` returns only `id`, `email`, and `role`, or `401`. Future Route Handlers and services must enforce the same server-side checks; hiding UI elements alone is not authorization.
 - The current schema has no enabled/disabled user attribute, so an account-status gate is not represented.
 
+## Attendance risk and recovery planning (Stage 6)
+
+Risk analysis is derived at request time in the server-side attendance service from the same finalized MySQL records used by Stage 5. No attendance percentage or risk state is persisted, and no MongoDB collection or pipeline is involved. Student data is still queried from the authenticated student's own profile; faculty risk rosters are queried only through `OfferingFaculty` assignments and ACTIVE enrollments.
+
+Each offering uses its `attendanceThreshold` (MySQL `DECIMAL(5,2)`, default 75%). Overall attendance uses the centralized `DEFAULT_ATTENDANCE_THRESHOLD_PERCENT` value of 75%. `EXCUSED` marks remain excluded from the attended and held counts.
+
+Classification is deterministic: `NO_DATA` when there are no counted finalized marks; `SAFE` when the exact count ratio meets or exceeds the required threshold; `AT_RISK` when below threshold and a threshold below 100% makes recovery possible; and `CRITICAL` when below a 100% threshold, which cannot be reached by future attendance alone. Display percentages are rounded to two decimals, but classification and recovery use unrounded counts. For a below-threshold student and threshold fraction `p < 1`, the minimum additional consecutive attended classes is `ceil((p * held - attended) / (1 - p))`. At 100%, recovery is marked impossible unless the student already meets the requirement. Invalid counts and thresholds are rejected.
+
+This decision-support feature goes beyond CRUD by analyzing historical marks to classify risk and calculate the minimum future attendance needed to meet a policy threshold. A SQL view is not used: the existing Prisma queries already enforce role scope and provide finalized marks, while the calculation is small, reusable, and must handle per-offering thresholds.
+
 ## Current implementation boundary
 
 Stage 5 faculty attendance creation performs a serializable MySQL transaction: recheck the offering assignment and term, load the active roster, reject incomplete or duplicate marks, create a FINALIZED session, and insert all records. Any failure rolls back both the session and its records. Finalized sessions are read-only in the UI and there is no update action. Student views derive only that student's marks from FINALIZED sessions; percentages are calculated at request time and are never stored.
 
-The admin page remains a protected placeholder. Risk/recovery planning, an analytics dashboard, MongoDB event processing, and the outbox worker remain deferred. Integration tests only connect when `ATTENDANCE_TEST_DATABASE_URL` targets a separate database whose name ends in `_test`; they never use the application's `DATABASE_URL`.
+The admin page remains a protected placeholder. A broader analytics dashboard, MongoDB event processing, and the outbox worker remain deferred. Integration tests only connect when `ATTENDANCE_TEST_DATABASE_URL` targets a separate database whose name ends in `_test`; they never use the application's `DATABASE_URL`.

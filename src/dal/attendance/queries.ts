@@ -34,6 +34,10 @@ export async function listFacultyOfferings(facultyId: string) {
               status: true,
               finalizedAt: true,
               _count: { select: { records: true } },
+              records: {
+                where: { session: { status: "FINALIZED" } },
+                select: { studentId: true, status: true },
+              },
             },
           },
         },

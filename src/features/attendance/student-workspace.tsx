@@ -1,4 +1,5 @@
 import { getStudentAttendanceOverview } from "@/services/attendance/student";
+import { RiskSummary } from "@/features/attendance/risk-summary";
 
 function displayDate(date: Date) {
   return new Intl.DateTimeFormat("en", {
@@ -12,7 +13,7 @@ function percentage(value: number) {
 }
 
 export async function StudentAttendanceWorkspace() {
-  const { courses, overall } = await getStudentAttendanceOverview();
+  const { courses, overall, overallRisk } = await getStudentAttendanceOverview();
 
   return (
     <div className="mt-8 space-y-8">
@@ -23,6 +24,9 @@ export async function StudentAttendanceWorkspace() {
           {overall.attended} attended of {overall.held} counted classes across your enrolled courses
           {overall.excused > 0 ? ` · ${overall.excused} excused classes excluded` : ""}.
         </p>
+        <div className="mt-4 border-t border-blue-100 pt-4">
+          <RiskSummary risk={overallRisk} />
+        </div>
       </section>
 
       <section>
@@ -42,6 +46,7 @@ export async function StudentAttendanceWorkspace() {
                   <th className="px-4 py-3 font-semibold">Absent</th>
                   <th className="px-4 py-3 font-semibold">Held</th>
                   <th className="px-4 py-3 font-semibold">Attendance</th>
+                  <th className="px-4 py-3 font-semibold">Status and recovery</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -56,6 +61,7 @@ export async function StudentAttendanceWorkspace() {
                     <td className="px-4 py-3 text-slate-800">{course.attendance.absent}</td>
                     <td className="px-4 py-3 text-slate-800">{course.attendance.held}</td>
                     <td className="px-4 py-3 font-semibold text-slate-900">{percentage(course.attendance.percentage)}</td>
+                    <td className="min-w-64 px-4 py-3"><RiskSummary risk={course.risk} /></td>
                   </tr>
                 ))}
               </tbody>

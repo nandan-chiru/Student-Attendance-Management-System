@@ -1,6 +1,7 @@
 import { requireStudent } from "@/auth/authorization";
 import { listStudentEnrollments } from "@/dal/attendance/queries";
 import { calculateAttendance } from "@/services/attendance/calculations";
+import { analyzeAttendanceRisk, DEFAULT_ATTENDANCE_THRESHOLD_PERCENT } from "@/services/attendance/risk";
 
 export async function getStudentAttendanceOverview() {
   const student = await requireStudent();
@@ -20,6 +21,11 @@ export async function getStudentAttendanceOverview() {
       }] : [];
     });
     const attendance = calculateAttendance(history.map(({ status }) => status));
+    const risk = analyzeAttendanceRisk({
+      attended: attendance.attended,
+      held: attendance.held,
+      requiredPercent: Number(offering.attendanceThreshold),
+    });
 
     return {
       offeringId: offering.id,
@@ -29,6 +35,7 @@ export async function getStudentAttendanceOverview() {
       sectionCode: offering.sectionCode,
       attendanceThreshold: Number(offering.attendanceThreshold),
       attendance,
+      risk,
       history,
     };
   });
@@ -37,5 +44,11 @@ export async function getStudentAttendanceOverview() {
     courses.flatMap((course) => course.history.map(({ status }) => status)),
   );
 
-  return { courses, overall };
+  const overallRisk = analyzeAttendanceRisk({
+    attended: overall.attended,
+    held: overall.held,
+    requiredPercent: DEFAULT_ATTENDANCE_THRESHOLD_PERCENT,
+  });
+
+  return { courses, overall, overallRisk };
 }

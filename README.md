@@ -1,6 +1,6 @@
 # Student Attendance Management System
 
-A DBMS Level 3 Student Attendance Management System built on Next.js App Router and TypeScript. Stage 5 adds the core faculty attendance workflow and student attendance history on top of the MySQL/Prisma foundation.
+A DBMS Level 3 Student Attendance Management System built on Next.js App Router and TypeScript. Stage 6 adds server-calculated attendance risk and recovery guidance to the faculty and student attendance workflows.
 
 ## Technology stack
 
@@ -74,7 +74,15 @@ Faculty see only offerings assigned through `OfferingFaculty`. For an offering, 
 
 Students see only their own ACTIVE or COMPLETED enrollments, finalized session history, and per-course/overall counts. The profile ID is derived from the authenticated server-side user. Attendance is calculated from finalized MySQL records: PRESENT counts attended, ABSENT counts held but not attended, and EXCUSED is excluded from both. With no counted marks the safe percentage is `0%`; values are rounded to two decimal places. No percentage is stored in the database.
 
-Faculty pages use `/faculty`; session history details are at `/faculty/sessions/[sessionId]`. Student attendance is at `/student`. Session creation uses a validated Server Action; reads are server-side Prisma queries. The admin page remains a protected placeholder. No MongoDB event workflow or analytics dashboard is implemented.
+Faculty pages use `/faculty`; session history details are at `/faculty/sessions/[sessionId]`. Student attendance is at `/student`. Session creation uses a validated Server Action; reads are server-side Prisma queries. The admin page remains a protected placeholder. No MongoDB event workflow is implemented.
+
+## Attendance risk and recovery planner (Stage 6)
+
+Risk is derived from finalized MySQL marks at request time; percentages and risk classifications are not persisted. Each course offering uses its configurable `attendanceThreshold` (default 75%), while the overall summary uses `DEFAULT_ATTENDANCE_THRESHOLD_PERCENT` (75%). `EXCUSED` marks do not count as held or attended. Percentages are rounded to two decimals for display; risk checks use exact attendance counts.
+
+Statuses are: `NO_DATA` when no counted finalized marks exist; `SAFE` when the requirement is met; `AT_RISK` when below a recoverable requirement; and `CRITICAL` when below a 100% requirement, which future attendance alone cannot recover. For threshold fraction `p < 1`, attended count `a`, and held count `h`, the minimum future consecutive classes to attend is `ceil((p × h - a) / (1 - p))`. A student already meeting the threshold needs zero classes. The calculation handles zero sessions separately, uses integer arithmetic for the decision and recovery count, rejects invalid input, and does not confuse rounded display values with the underlying ratio.
+
+The Student page shows overall and per-course status and recommendations. The Faculty page shows the same analysis for ACTIVE students in offerings assigned to the authenticated faculty profile. The feature provides a decision from historical data, rather than only create/read/update/delete operations. A database view was not added because per-offering thresholds and authorization-scoped Prisma reads are better kept in the existing service/DAL flow.
 
 `npm test` runs unit tests plus an optional MySQL integration test. To enable the integration test, set `ATTENDANCE_TEST_DATABASE_URL` to a separately migrated and seeded database whose name ends in `_test`. The test transaction deliberately rolls back; it never targets `DATABASE_URL`.
 
@@ -100,4 +108,4 @@ tests/integration/        Optional isolated MySQL integrity/transaction tests
 
 ## Current stage boundary
 
-Stage 5 implements attendance entry, finalized session history, student attendance summaries, and role-scoped server authorization. The recovery planner, analytics dashboard, MongoDB event processing, outbox worker, and admin attendance tools remain out of scope.
+Stage 6 implements attendance entry, finalized session history, student attendance summaries, server-side role-scoped attendance risk analysis, and recovery guidance. Broader analytics dashboards, MongoDB event processing, the outbox worker, and admin attendance tools remain out of scope.

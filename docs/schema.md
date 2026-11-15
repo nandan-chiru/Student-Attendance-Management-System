@@ -83,7 +83,7 @@ Only records belonging to `FINALIZED` sessions are eligible for attendance calcu
 
 The database check ensures a finalized session has a `finalizedAt` timestamp and a draft/cancelled session does not. Query logic still filters on `AttendanceSession.status = 'FINALIZED'`. This stage treats finalized sessions as immutable: there is no attendance update action. A session with the same offering/date/topic is rejected by the service within a serializable transaction. The existing index is not a unique key because an offering can hold multiple distinct topics on the same date.
 
-Attendance percentages are derived in the service layer from each student's marks in finalized sessions. The denominator is PRESENT + ABSENT marks; EXCUSED is shown in history but excluded. An empty denominator safely returns 0%. No percentage is persisted.
+Attendance percentages and risk guidance are derived in the service layer from each student's marks in finalized sessions. The denominator is PRESENT + ABSENT marks; EXCUSED is shown in history but excluded. An empty denominator safely returns 0% and the risk state is `NO_DATA`. No percentage or risk state is persisted. The per-offering `attendanceThreshold` is configurable and defaults to 75%; aggregate overall analysis uses the central 75% default.
 
 ## Seed data
 

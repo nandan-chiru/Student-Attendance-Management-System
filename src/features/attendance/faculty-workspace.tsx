@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getFacultyAttendanceWorkspace } from "@/services/attendance/faculty";
 import { SessionCreateForm } from "@/features/attendance/session-create-form";
+import { RiskSummary } from "@/features/attendance/risk-summary";
 
 function displayDate(date: Date) {
   return new Intl.DateTimeFormat("en", {
@@ -63,6 +64,42 @@ export async function FacultyAttendanceWorkspace() {
               />
             </div>
           </details>
+
+          <div className="mt-7">
+            <h4 className="font-semibold text-slate-900">Student attendance risk</h4>
+            <p className="mt-1 text-sm text-slate-600">
+              {offering.riskStudents.filter(({ risk }) => risk.status === "AT_RISK" || risk.status === "CRITICAL").length} of {offering.riskStudents.length} students are below the {offering.attendanceThreshold.toString()}% requirement. Analysis uses finalized MySQL records for this assigned offering.
+            </p>
+            {offering.riskStudents.length === 0 ? (
+              <p className="mt-2 text-sm text-slate-500">No active enrolled students.</p>
+            ) : (
+              <div className="mt-3 overflow-x-auto rounded-lg border border-slate-200">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-slate-50 text-slate-600">
+                    <tr>
+                      <th className="px-4 py-3 font-semibold">Student</th>
+                      <th className="px-4 py-3 font-semibold">Attended / held</th>
+                      <th className="px-4 py-3 font-semibold">Attendance</th>
+                      <th className="px-4 py-3 font-semibold">Risk and recommendation</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {offering.riskStudents.map((student) => (
+                      <tr key={student.id}>
+                        <td className="px-4 py-3">
+                          <span className="font-medium text-slate-900">{student.name}</span>
+                          <span className="block text-slate-600">{student.registrationNumber}</span>
+                        </td>
+                        <td className="px-4 py-3 text-slate-700">{student.attendance.attended} / {student.attendance.held}</td>
+                        <td className="px-4 py-3 font-semibold text-slate-900">{student.risk.currentPercent.toFixed(2)}%</td>
+                        <td className="min-w-72 px-4 py-3"><RiskSummary risk={student.risk} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
 
           <div className="mt-7">
             <h4 className="font-semibold text-slate-900">Session history</h4>
