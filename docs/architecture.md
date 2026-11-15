@@ -2,7 +2,7 @@
 
 ## Overview
 
-The foundation uses a modular Next.js App Router application. Route Handlers and server-side page logic will call services, which use a data access layer (DAL) to access the appropriate database. Authentication and authorization checks will be added at protected server entry points and in the DAL before data is returned or changed.
+The application uses modular Next.js App Router pages and Route Handlers. Server-rendered pages and Server Actions call services, which use a data access layer (DAL) to query MySQL. Authentication and authorization checks protect server entry points and sensitive data access.
 
 ```text
 User
@@ -38,11 +38,11 @@ MySQL remains authoritative for current attendance state. When the event pipelin
 
 ## Application layers
 
-- **Next.js UI:** Server-rendered pages and forms for students, faculty, and administrators will be added in later stages.
-- **API / server layer:** Route Handlers expose validated HTTP operations. The current `GET /api/health` route only confirms the API layer is running.
-- **Service layer:** Future attendance and analytics rules belong here rather than in page components or route handlers.
-- **Data access layer:** Future SQL and Mongo queries will be centralized here, with authorization checks close to sensitive data access.
-- **Validation:** Request and form validation will be added alongside the first implemented features.
+- **Next.js UI:** Server-rendered student attendance summaries and faculty roster/session pages; a small Client Component handles form pending/result state.
+- **API / server layer:** Route Handlers provide health and auth endpoints. Faculty session creation is a validated Server Action; reads are server-rendered.
+- **Service layer:** `src/services/attendance/` validates date and roster rules, calculates percentages, and coordinates session creation.
+- **Data access layer:** `src/dal/attendance/` contains scoped Prisma queries and transaction primitives. Faculty queries receive the authenticated faculty profile ID; student queries receive the profile derived from the session.
+- **Validation:** Zod validates session IDs, calendar dates, statuses, and the submitted roster on the server. Client constraints are only usability aids.
 
 ## Security and configuration
 
@@ -60,4 +60,6 @@ Database URLs and the authentication secret are read from environment variables.
 
 ## Current implementation boundary
 
-The current implementation includes the Next.js foundation, health endpoint, Prisma MySQL relational schema and seed, and Stage 4 credentials authentication, protected role placeholders, and focused authorization tests. Attendance workflows, dashboards, analytics, and MongoDB event processing remain deferred.
+Stage 5 faculty attendance creation performs a serializable MySQL transaction: recheck the offering assignment and term, load the active roster, reject incomplete or duplicate marks, create a FINALIZED session, and insert all records. Any failure rolls back both the session and its records. Finalized sessions are read-only in the UI and there is no update action. Student views derive only that student's marks from FINALIZED sessions; percentages are calculated at request time and are never stored.
+
+The admin page remains a protected placeholder. Risk/recovery planning, an analytics dashboard, MongoDB event processing, and the outbox worker remain deferred. Integration tests only connect when `ATTENDANCE_TEST_DATABASE_URL` targets a separate database whose name ends in `_test`; they never use the application's `DATABASE_URL`.

@@ -79,9 +79,11 @@ Indexes created by unique keys are not duplicated with identical ordinary indexe
 
 ## Attendance calculation rules
 
-Only records belonging to `FINALIZED` sessions are eligible for future attendance calculations. `PRESENT` contributes to attended classes; `ABSENT` contributes to classes held and not attended. `EXCUSED` is excluded from both the numerator and denominator. A future finalization workflow must ensure every active enrollee has a record before a session is finalized; absence of a record is not silently treated as a particular status by the schema.
+Only records belonging to `FINALIZED` sessions are eligible for attendance calculations. `PRESENT` contributes to attended classes; `ABSENT` contributes to classes held and not attended. `EXCUSED` is excluded from both the numerator and denominator. Stage 5 creates each session and one record for every ACTIVE enrollee in the same transaction, then finalizes the session. Missing marks are rejected rather than interpreted as a status.
 
-The database check ensures a finalized session has a `finalizedAt` timestamp and a draft/cancelled session does not. Query logic must still filter on `AttendanceSession.status = 'FINALIZED'`; the check does not by itself calculate percentages or make records immutable.
+The database check ensures a finalized session has a `finalizedAt` timestamp and a draft/cancelled session does not. Query logic still filters on `AttendanceSession.status = 'FINALIZED'`. This stage treats finalized sessions as immutable: there is no attendance update action. A session with the same offering/date/topic is rejected by the service within a serializable transaction. The existing index is not a unique key because an offering can hold multiple distinct topics on the same date.
+
+Attendance percentages are derived in the service layer from each student's marks in finalized sessions. The denominator is PRESENT + ABSENT marks; EXCUSED is shown in history but excluded. An empty denominator safely returns 0%. No percentage is persisted.
 
 ## Seed data
 

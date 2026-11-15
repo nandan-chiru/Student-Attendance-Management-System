@@ -1,22 +1,23 @@
 import { Suspense } from "react";
 import { connection } from "next/server";
+import type { ReactNode } from "react";
 import type { UserRole } from "@/generated/prisma/enums";
 import { requireRoleForPage } from "@/auth/page-guards";
 import { RoleArea } from "@/auth/role-area";
 
-export function ProtectedRolePage({ role }: { role: UserRole }) {
+export function ProtectedRolePage({ role, children }: { role: UserRole; children?: ReactNode }) {
   return (
     <Suspense fallback={<RolePageLoadingState />}>
-      <ProtectedRoleContent role={role} />
+      <ProtectedRoleContent role={role}>{children}</ProtectedRoleContent>
     </Suspense>
   );
 }
 
-async function ProtectedRoleContent({ role }: { role: UserRole }) {
+async function ProtectedRoleContent({ role, children }: { role: UserRole; children?: ReactNode }) {
   await connection();
 
   const user = await requireRoleForPage(role);
-  return <RoleArea role={user.role} name={user.email} />;
+  return <RoleArea role={user.role} name={user.email}>{children}</RoleArea>;
 }
 
 function RolePageLoadingState() {

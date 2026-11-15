@@ -143,3 +143,71 @@ JOIN `courses` AS c ON c.`id` = o.`courseId`
 JOIN `student_profiles` AS sp ON sp.`id` = ar.`studentId`
 WHERE sp.`registrationNumber` = 'DEMO-2026-001'
 ORDER BY s.`sessionDate` DESC, c.`code`;
+
+-- Faculty roster: bind the faculty profile ID from the authenticated session.
+-- Never accept this identity from a request body.
+SELECT o.`id` AS `offeringId`, c.`code`, c.`name` AS `courseName`,
+       o.`sectionCode`, t.`name` AS `termName`,
+       sp.`id` AS `studentId`, sp.`registrationNumber`, u.`name` AS `studentName`
+FROM `offering_faculty` AS ofa
+JOIN `course_offerings` AS o ON o.`id` = ofa.`offeringId`
+JOIN `courses` AS c ON c.`id` = o.`courseId`
+JOIN `academic_terms` AS t ON t.`id` = o.`termId`
+LEFT JOIN `enrollments` AS e
+       ON e.`offeringId` = o.`id` AND e.`status` = 'ACTIVE'
+LEFT JOIN `student_profiles` AS sp ON sp.`id` = e.`studentId`
+LEFT JOIN `users` AS u ON u.`id` = sp.`userId`
+WHERE ofa.`facultyId` = :authenticatedFacultyProfileId
+ORDER BY c.`code`, o.`sectionCode`, sp.`registrationNumber`;
+
+-- Student per-course summary: bind the StudentProfile ID resolved from the
+-- authenticated server-side User. EXCUSED is omitted from held/attended.
+SELECT c.`code`, c.`name` AS `courseName`, o.`sectionCode`, t.`name` AS `termName`,
+       COALESCE(SUM(ar.`status` = 'PRESENT'), 0) AS `attended`,
+       COALESCE(SUM(ar.`status` = 'ABSENT'), 0) AS `absent`,
+       COALESCE(SUM(ar.`status` IN ('PRESENT', 'ABSENT')), 0) AS `held`,
+       COALESCE(ROUND(
+           100.0 * SUM(ar.`status` = 'PRESENT') /
+           NULLIF(SUM(ar.`status` IN ('PRESENT', 'ABSENT')), 0), 2
+       ), 0) AS `attendancePercent`
+FROM `enrollments` AS e
+JOIN `course_offerings` AS o ON o.`id` = e.`offeringId`
+JOIN `courses` AS c ON c.`id` = o.`courseId`
+JOIN `academic_terms` AS t ON t.`id` = o.`termId`
+LEFT JOIN `attendance_sessions` AS s
+       ON s.`offeringId` = o.`id` AND s.`status` = 'FINALIZED'
+LEFT JOIN `attendance_records` AS ar
+       ON ar.`sessionId` = s.`id` AND ar.`studentId` = e.`studentId`
+WHERE e.`studentId` = :authenticatedStudentProfileId
+  AND e.`status` IN ('ACTIVE', 'COMPLETED')
+GROUP BY o.`id`, c.`code`, c.`name`, o.`sectionCode`, t.`name`
+ORDER BY t.`name`, c.`code`, o.`sectionCode`;
+
+-- Student history: the same authenticated-profile scope as the summary query.
+SELECT s.`id` AS `sessionId`, s.`sessionDate`, s.`topic`, ar.`status`,
+       ar.`markedAt`, ar.`remarks`, c.`code`, c.`name` AS `courseName`, o.`sectionCode`
+FROM `attendance_records` AS ar
+JOIN `attendance_sessions` AS s
+     ON s.`id` = ar.`sessionId` AND s.`status` = 'FINALIZED'
+JOIN `course_offerings` AS o ON o.`id` = s.`offeringId`
+JOIN `courses` AS c ON c.`id` = o.`courseId`
+WHERE ar.`studentId` = :authenticatedStudentProfileId
+ORDER BY s.`sessionDate` DESC, s.`createdAt` DESC, c.`code`;
+
+-- Shortage summary for an offering, after aggregation by the individual
+-- student (no averaging of percentages across unrelated courses).
+SELECT sp.`registrationNumber`, u.`name`,
+       COUNT(CASE WHEN ar.`status` IN ('PRESENT', 'ABSENT') THEN 1 END) AS `held`,
+       SUM(ar.`status` = 'PRESENT') AS `attended`,
+       ROUND(100.0 * SUM(ar.`status` = 'PRESENT') /
+             NULLIF(COUNT(CASE WHEN ar.`status` IN ('PRESENT', 'ABSENT') THEN 1 END), 0), 2)
+             AS `attendancePercent`
+FROM `attendance_records` AS ar
+JOIN `attendance_sessions` AS s
+     ON s.`id` = ar.`sessionId` AND s.`status` = 'FINALIZED'
+JOIN `student_profiles` AS sp ON sp.`id` = ar.`studentId`
+JOIN `users` AS u ON u.`id` = sp.`userId`
+WHERE s.`offeringId` = :authorizedOfferingId
+GROUP BY sp.`id`, sp.`registrationNumber`, u.`name`
+HAVING COUNT(CASE WHEN ar.`status` IN ('PRESENT', 'ABSENT') THEN 1 END) > 0
+ORDER BY `attendancePercent`, sp.`registrationNumber`;
