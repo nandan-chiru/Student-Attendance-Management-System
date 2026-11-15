@@ -31,6 +31,9 @@ export async function FacultyAttendanceWorkspace() {
         <p className="mt-1 text-sm text-slate-600">
           Only offerings assigned to your faculty profile are shown.
         </p>
+        <Link href="/faculty/audit" className="mt-2 inline-block text-sm font-medium text-blue-700 hover:underline">
+          View attendance event audit
+        </Link>
       </div>
 
       {offerings.map((offering) => (

@@ -34,7 +34,7 @@ The official MongoDB Node.js driver is reused through `src/lib/db/mongodb.ts`, w
 
 The `attendance_events` collection is an append-only event projection with a unique index on `eventId`. The `ATTENDANCE_SESSION_FINALIZED` contract contains stable MySQL `sessionId`, `offeringId`, and `facultyId`, an event time, affected student count, and small schema-version/session-date metadata. It excludes names, emails, attendance rows, credentials, and other unnecessary personal data.
 
-Stage 7B reuses the existing SQL `OutboxEvent` model. Its event row is written atomically with attendance finalization; MongoDB delivery remains deferred to Stage 7C.
+Stage 7B reuses the existing SQL `OutboxEvent` model. Its event row is written atomically with attendance finalization. Stage 7C delivers pending events to MongoDB through the standalone worker.
 
 ## Consistency boundary
 
@@ -64,6 +64,14 @@ The server creates one `ATTENDANCE_SESSION_FINALIZED` event after inserting the 
 Any session, record, or outbox insert error rejects the transaction and rolls back all of its writes. The Server Action returns its existing generic save failure for unexpected persistence errors; database details are not sent to the browser. The attendance transaction imports no MongoDB client and performs no network call. A separate `npm run db:outbox-worker` process selects pending finalization events in creation order with a bounded batch, validates each payload against the shared event contract and SQL identity, and upserts it by `eventId` using `$setOnInsert`. The worker confirms stored content before acknowledging; conflicting content is never overwritten. A unique MongoDB `eventId` index makes concurrent duplicate delivery safe. Only after MongoDB confirms an identical event does the worker conditionally set `deliveredAt` where it remains null. MongoDB or SQL errors leave the row retryable; a Mongo document may remain after SQL acknowledgement failure and is recognized on retry.
 
 The worker polls outside the Next.js request lifecycle, sleeps when idle, backs off after errors, and closes database resources on SIGINT/SIGTERM. It logs event IDs and failure stage without logging payloads or credentials. MongoDB delivery is asynchronous and does not change the canonical MySQL attendance state.
+
+## MongoDB aggregation and audit (Stage 7D)
+
+The `attendance_events` collection is queried with MongoDB aggregation pipelines; the application does not load the entire collection to compute summaries in TypeScript. Aggregations return finalized event totals, the sum of event-level affected-student counts, event counts grouped by UTC date, and event counts grouped by offering. Recent event history is sorted and paginated in MongoDB. The collection retains its unique `eventId` index; descending `occurredAt` and `(offeringId, occurredAt)` indexes support global date/history and faculty offering-scope query patterns.
+
+`/admin/audit` requires `ADMIN` and can query the global event collection. `/faculty/audit` requires `FACULTY`; the service resolves assigned offering IDs from MySQL `OfferingFaculty` before adding those IDs to the MongoDB `$match`. No client-supplied faculty or offering ID can broaden the query. Student audit UI is out of scope because MongoDB events do not contain student IDs. Adding student access later would require deriving eligible session IDs from the authenticated student's MySQL records first.
+
+The dashboard labels the sum of `affectedStudentCount` as an affected-student event count. It is a sum of roster sizes across events, not a unique-student count or an attendance percentage. MySQL remains authoritative for identity, assignments, courses, attendance records, and percentages; MongoDB is used only for event history and event aggregation.
 
 ## Application layers
 
@@ -101,4 +109,4 @@ This decision-support feature goes beyond CRUD by analyzing historical marks to 
 
 Faculty attendance finalization performs a serializable MySQL transaction: recheck the offering assignment and term, load the active roster, reject incomplete or duplicate marks, create a FINALIZED session, insert all records, then insert exactly one pending `OutboxEvent`. Any failure rolls back the session, records, and event together. Finalized sessions are read-only in the UI and there is no update action. Student views derive only that student's marks from FINALIZED sessions; percentages are calculated at request time and are never stored.
 
-The admin page remains a protected placeholder. Broader analytics dashboards remain deferred. Integration tests only connect when `ATTENDANCE_TEST_DATABASE_URL` targets a separate database whose name ends in `_test`; they never use the application's `DATABASE_URL`.
+Broader analytics dashboards beyond the event audit views remain deferred. Integration tests only connect when `ATTENDANCE_TEST_DATABASE_URL` targets a separate database whose name ends in `_test`; they never use the application's `DATABASE_URL`.

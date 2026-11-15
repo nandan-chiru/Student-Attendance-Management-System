@@ -12,6 +12,11 @@ export function createMongoAttendanceEventStore(getCollection: () => Promise<Eve
     async ensureIndexes() {
       const collection = await getCollection();
       await collection.createIndex({ eventId: 1 }, { unique: true, name: "attendance_events_eventId_unique" });
+      await collection.createIndex({ occurredAt: -1 }, { name: "attendance_events_occurredAt_desc_idx" });
+      await collection.createIndex(
+        { offeringId: 1, occurredAt: -1 },
+        { name: "attendance_events_offering_occurredAt_idx" },
+      );
     },
     async persist(event) {
       const collection = await getCollection();

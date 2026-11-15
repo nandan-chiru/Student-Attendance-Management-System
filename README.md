@@ -1,6 +1,6 @@
 # Student Attendance Management System
 
-A DBMS Level 3 Student Attendance Management System built on Next.js App Router and TypeScript. Stage 6 adds server-calculated attendance risk and recovery guidance to the faculty and student attendance workflows.
+A DBMS Level 3 Student Attendance Management System built on Next.js App Router and TypeScript, with MySQL-backed attendance workflows and MongoDB-backed event audit summaries.
 
 ## Technology stack
 
@@ -16,7 +16,7 @@ Authentication uses Auth.js Credentials with JWT-backed sessions. Passwords are 
 
 MySQL is the primary and canonical relational source of truth for users and profiles, academic terms, courses and offerings, enrollments, attendance sessions, attendance records, and the SQL outbox. Attendance percentages will be calculated only from attendance records in finalized sessions.
 
-MySQL remains the system of record. MongoDB is the secondary NoSQL store for immutable attendance event/audit history and event-based aggregation/reporting. Attendance sessions, attendance records, and percentages are not duplicated there. Attendance finalization writes an event to the existing SQL `OutboxEvent` table in the same MySQL transaction as its session and records. A standalone worker validates pending outbox events, persists them idempotently to MongoDB, then conditionally marks them delivered in MySQL.
+MySQL remains the system of record. MongoDB is the secondary NoSQL store for immutable attendance event/audit history and event-based aggregation/reporting. Attendance sessions, attendance records, and percentages are not duplicated there. Attendance finalization writes an event to the existing SQL `OutboxEvent` table in the same MySQL transaction as its session and records. A standalone worker validates pending outbox events, persists them idempotently to MongoDB, then conditionally marks them delivered in MySQL. Stage 7D uses MongoDB aggregation for scoped audit summaries and history.
 
 ## Local prerequisites
 
@@ -24,7 +24,7 @@ MySQL remains the system of record. MongoDB is the secondary NoSQL store for imm
 - MySQL 8.0.16 or newer (the migration includes enforced `CHECK` constraints)
 - Git
 
-MongoDB is optional for normal application use. Configure `MONGODB_URI` to run the outbox worker or MongoDB health check. Attendance state and percentages are stored/calculated from MySQL only. The worker requires both database configurations and runs separately from Next.js.
+MongoDB is optional for normal attendance workflows. Configure `MONGODB_URI` to run the outbox worker, MongoDB health check, or audit pages. Attendance state and percentages are stored/calculated from MySQL only. The worker requires both database configurations and runs separately from Next.js.
 
 ## Environment configuration
 
@@ -64,7 +64,7 @@ The seed creates `admin@attendance-demo.test`, `faculty.one@attendance-demo.test
 
 The sign-in page is `/login`. Auth.js validates credentials against the existing MySQL `User` records and uses the stored bcrypt password hash. An eight-hour JWT session is held in an HTTP-only, same-site cookie managed by Auth.js; Auth.js enables the secure-cookie flag for HTTPS deployments. `AUTH_SECRET` is required in the local `.env`; generate a unique random value for each environment. The `.env` file is ignored by Git.
 
-The database roles are `STUDENT`, `FACULTY`, and `ADMIN`. Successful sign-in routes users to `/student`, `/faculty`, or `/admin`. Student and faculty areas now provide the Stage 5 attendance workflow; the admin area remains a protected placeholder. Server-rendered pages and Server Actions use centralized role guards. Student profile access is derived from the authenticated user; a caller-provided profile ID is not trusted. Faculty offering access checks the `OfferingFaculty` relation in MySQL. Admin-only operations require the `ADMIN` role. Authorization is enforced on the server because browser-side hiding is not a security boundary and can be bypassed by direct requests.
+The database roles are `STUDENT`, `FACULTY`, and `ADMIN`. Successful sign-in routes users to `/student`, `/faculty`, or `/admin`. Student and faculty areas provide the attendance workflow; admins and faculty can open their role-scoped audit views. Server-rendered pages and Server Actions use centralized role guards. Student profile access is derived from the authenticated user; a caller-provided profile ID is not trusted. Faculty offering access checks the `OfferingFaculty` relation in MySQL. Admin-only operations require the `ADMIN` role. Authorization is enforced on the server because browser-side hiding is not a security boundary and can be bypassed by direct requests.
 
 `GET /api/auth/me` returns only the current user's `id`, `email`, and `role`, or `401` without a session. It never returns a password hash. No user-active flag exists in the current schema; account enabled/disabled state is therefore not currently represented.
 
@@ -78,7 +78,7 @@ Faculty see only offerings assigned through `OfferingFaculty`. For an offering, 
 
 Students see only their own ACTIVE or COMPLETED enrollments, finalized session history, and per-course/overall counts. The profile ID is derived from the authenticated server-side user. Attendance is calculated from finalized MySQL records: PRESENT counts attended, ABSENT counts held but not attended, and EXCUSED is excluded from both. With no counted marks the safe percentage is `0%`; values are rounded to two decimal places. No percentage is stored in the database.
 
-Faculty pages use `/faculty`; session history details are at `/faculty/sessions/[sessionId]`. Student attendance is at `/student`. Session creation uses a validated Server Action; reads are server-side Prisma queries. The admin page remains a protected placeholder. The standalone Stage 7C worker delivers outbox events asynchronously to MongoDB.
+Faculty pages use `/faculty`; session history details are at `/faculty/sessions/[sessionId]`. Student attendance is at `/student`. Session creation uses a validated Server Action; reads are server-side Prisma queries. The admin landing area links to the system audit page. The standalone Stage 7C worker delivers outbox events asynchronously to MongoDB.
 
 ## Attendance risk and recovery planner (Stage 6)
 
@@ -90,6 +90,14 @@ The Student page shows overall and per-course status and recommendations. The Fa
 
 `npm test` runs unit tests plus an optional MySQL integration test. To enable the integration test, set `ATTENDANCE_TEST_DATABASE_URL` to a separately migrated and seeded database whose name ends in `_test`. The test transaction deliberately rolls back; it never targets `DATABASE_URL`.
 
+## MongoDB aggregation and audit (Stage 7D)
+
+`/admin/audit` shows global finalized-event counts, event counts grouped by UTC date and offering, and paginated recent history. `/faculty/audit` shows the same information only for course offerings assigned to the authenticated faculty member. Both pages enforce server-side role authorization.
+
+Faculty scope comes from MySQL `OfferingFaculty` assignments before MongoDB is queried. Browser-supplied offering IDs are not accepted as an authorization scope. Students do not have a MongoDB audit page because event documents do not contain student IDs. MongoDB aggregations summarize the event/audit projection only; MySQL remains authoritative for attendance records, assignments, and attendance percentages.
+
+The affected-student event count is the sum of roster sizes recorded on events. It counts student-event occurrences and is not a count of unique students.
+
 ## Project structure
 
 ```text
@@ -98,6 +106,9 @@ src/lib/db/              Prisma and MongoDB connection helpers
 src/auth/                 Credentials auth, session and authorization helpers
 src/dal/attendance/       Authorized attendance queries and transactional writes
 src/services/attendance/  Session rules, validation, and attendance calculations
+src/dal/audit/            MongoDB audit aggregation and MySQL scope queries
+src/services/audit/       Audit authorization, aggregation pipeline builders, and report composition
+src/features/audit/       Server-rendered audit tables and summaries
 src/validation/           Shared validation utilities (attendance schemas live by their service)
 src/features/attendance/ Faculty/student server workspaces and attendance form
 prisma/schema.prisma      MySQL relational model
@@ -106,10 +117,10 @@ prisma/seed.ts            Idempotent development/demo seed
 docs/schema.md            Tables, keys, constraints, indexes, and rules
 docs/er-diagram.md        Mermaid ER diagram source
 docs/queries.sql          Representative DBMS SQL examples
-tests/unit/               Authentication, authorization, validation, and calculation tests
+tests/unit/               Authentication, authorization, attendance, event, and audit tests
 tests/integration/        Optional isolated MySQL integrity/transaction tests
 ```
 
 ## Current stage boundary
 
-Stage 7B adds the transactional SQL outbox record to attendance finalization. Stage 7C adds a standalone delivery worker that writes immutable event documents to MongoDB and retries safely using the unique event ID. The worker marks MySQL rows delivered only after MongoDB persistence is confirmed. Broader analytics dashboards and admin attendance tools remain out of scope.
+Stage 7B adds the transactional SQL outbox record to attendance finalization. Stage 7C adds a standalone delivery worker that writes immutable event documents to MongoDB and retries safely using the unique event ID. Stage 7D adds MongoDB aggregation and server-side admin/faculty audit pages. Attendance records, risk calculations, and percentages remain MySQL-backed.
