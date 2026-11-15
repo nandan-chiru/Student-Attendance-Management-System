@@ -16,7 +16,7 @@ Authentication uses Auth.js Credentials with JWT-backed sessions. Passwords are 
 
 MySQL is the primary and canonical relational source of truth for users and profiles, academic terms, courses and offerings, enrollments, attendance sessions, attendance records, and the SQL outbox. Attendance percentages will be calculated only from attendance records in finalized sessions.
 
-MySQL remains the system of record. MongoDB is the secondary NoSQL store planned for immutable attendance event/audit history and future event-based aggregation/reporting. Attendance sessions, attendance records, and percentages are not duplicated there. The MongoDB driver and event contract are present. Attendance finalization writes an event to the existing SQL `OutboxEvent` table in the same MySQL transaction as its session and records. No MongoDB collection writes, delivery worker, or synchronization process is implemented yet.
+MySQL remains the system of record. MongoDB is the secondary NoSQL store for immutable attendance event/audit history and event-based aggregation/reporting. Attendance sessions, attendance records, and percentages are not duplicated there. Attendance finalization writes an event to the existing SQL `OutboxEvent` table in the same MySQL transaction as its session and records. A standalone worker validates pending outbox events, persists them idempotently to MongoDB, then conditionally marks them delivered in MySQL.
 
 ## Local prerequisites
 
@@ -24,7 +24,7 @@ MySQL remains the system of record. MongoDB is the secondary NoSQL store planned
 - MySQL 8.0.16 or newer (the migration includes enforced `CHECK` constraints)
 - Git
 
-MongoDB is optional for normal application use. Configure `MONGODB_URI` only if you want to run the MongoDB health check. Attendance state and percentages are stored/calculated from MySQL only.
+MongoDB is optional for normal application use. Configure `MONGODB_URI` to run the outbox worker or MongoDB health check. Attendance state and percentages are stored/calculated from MySQL only. The worker requires both database configurations and runs separately from Next.js.
 
 ## Environment configuration
 
@@ -49,6 +49,8 @@ npm run db:generate
 npm run db:migrate
 npm run db:seed
 ```
+
+Run the asynchronous outbox publisher in a separate terminal with `npm run db:outbox-worker`. It polls pending MySQL outbox rows in bounded batches, sleeps when idle, and retries failures with backoff. Stop it with Ctrl+C. MongoDB is contacted only by this worker, outside attendance transactions.
 
 `db:migrate` applies the checked-in initial migration and prompts for a migration name only when new schema changes need one. `db:seed` runs explicitly and requires a reachable MySQL database plus `DEMO_SEED_PASSWORD` in `.env`.
 
@@ -76,7 +78,7 @@ Faculty see only offerings assigned through `OfferingFaculty`. For an offering, 
 
 Students see only their own ACTIVE or COMPLETED enrollments, finalized session history, and per-course/overall counts. The profile ID is derived from the authenticated server-side user. Attendance is calculated from finalized MySQL records: PRESENT counts attended, ABSENT counts held but not attended, and EXCUSED is excluded from both. With no counted marks the safe percentage is `0%`; values are rounded to two decimal places. No percentage is stored in the database.
 
-Faculty pages use `/faculty`; session history details are at `/faculty/sessions/[sessionId]`. Student attendance is at `/student`. Session creation uses a validated Server Action; reads are server-side Prisma queries. The admin page remains a protected placeholder. Outbox delivery to MongoDB is deferred to Stage 7C.
+Faculty pages use `/faculty`; session history details are at `/faculty/sessions/[sessionId]`. Student attendance is at `/student`. Session creation uses a validated Server Action; reads are server-side Prisma queries. The admin page remains a protected placeholder. The standalone Stage 7C worker delivers outbox events asynchronously to MongoDB.
 
 ## Attendance risk and recovery planner (Stage 6)
 
@@ -110,4 +112,4 @@ tests/integration/        Optional isolated MySQL integrity/transaction tests
 
 ## Current stage boundary
 
-Stage 7B adds the transactional SQL outbox record to attendance finalization. Stage 7A provides the optional MongoDB connection, health check, and event contract. Stage 6 attendance entry, finalized session history, student attendance summaries, server-side role-scoped attendance risk analysis, and recovery guidance remain MySQL-backed. MongoDB delivery/retries, broader analytics dashboards, and admin attendance tools remain out of scope.
+Stage 7B adds the transactional SQL outbox record to attendance finalization. Stage 7C adds a standalone delivery worker that writes immutable event documents to MongoDB and retries safely using the unique event ID. The worker marks MySQL rows delivered only after MongoDB persistence is confirmed. Broader analytics dashboards and admin attendance tools remain out of scope.

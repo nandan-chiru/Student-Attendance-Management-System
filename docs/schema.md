@@ -4,7 +4,7 @@
 
 MySQL is the primary relational database and the canonical source of truth for users, academic structure, enrollment, sessions, and attendance records. It provides relational foreign keys, unique keys, enums, transactional operations, and SQL reporting. Prisma models the relations and generates the initial migration. Attendance percentages are derived from finalized MySQL attendance records.
 
-MongoDB is intentionally deferred. A future stage may project outbox events to MongoDB for flexible audit/activity documents and event aggregation. MongoDB will not hold canonical attendance totals. There are no MongoDB collections, writes, or workers in this stage.
+MongoDB is the secondary event/audit projection. A standalone Stage 7C worker copies validated outbox event documents to MongoDB; it does not hold canonical attendance data.
 
 ## Tables and fields
 
@@ -22,7 +22,7 @@ All IDs are UUID strings stored as `CHAR(36)`. Prisma supplies UUIDs for client-
 | `enrollments` | Student registration for an offering: `id` PK, `offeringId` FK, `studentId` FK, `enrolledAt`, `status`. `(offeringId, studentId)` is unique. Status is `ACTIVE`, `DROPPED`, or `COMPLETED`. |
 | `attendance_sessions` | Class meeting: `id` PK, `offeringId` FK, `sessionDate`, optional `topic`, `status`, `finalizedAt`, `createdBy` FK, timestamps. Status is `DRAFT`, `FINALIZED`, or `CANCELLED`. A database check requires `finalizedAt` exactly when status is `FINALIZED`. |
 | `attendance_records` | Per-student result: `id` PK, `sessionId` FK, `studentId` FK, `status`, `markedAt`, `markedBy` FK, optional `remarks`. `(sessionId, studentId)` is unique. Status is `PRESENT`, `ABSENT`, or `EXCUSED`. |
-| `outbox_events` | Pending event delivery queue: `id` PK, unique `eventId`, `eventType`, `occurredAt`, optional actor/student/offering/session/record FKs, JSON `payload`, optional `deliveredAt`, `createdAt`. A null `deliveredAt` means pending. Stage 7B writes attendance-finalization events here; the Stage 7C processor is not implemented. |
+| `outbox_events` | Pending event delivery queue: `id` PK, unique `eventId`, `eventType`, `occurredAt`, optional actor/student/offering/session/record FKs, JSON `payload`, optional `deliveredAt`, `createdAt`. A null `deliveredAt` means pending. Stage 7B writes attendance-finalization events here; the Stage 7C worker validates and delivers supported events asynchronously. |
 
 The profile role and `User.role` must agree (for example, a `STUDENT` user has a student profile). That cross-table business rule is enforced by the future account-provisioning service; a simple FK cannot express it. The schema allows an `ADMIN` user to have neither profile.
 
@@ -81,7 +81,7 @@ Indexes created by unique keys are not duplicated with identical ordinary indexe
 
 Only records belonging to `FINALIZED` sessions are eligible for attendance calculations. `PRESENT` contributes to attended classes; `ABSENT` contributes to classes held and not attended. `EXCUSED` is excluded from both the numerator and denominator. Stage 5 creates each session and one record for every ACTIVE enrollee in the same transaction, then finalizes the session. Stage 7B extends this transaction to insert exactly one `ATTENDANCE_SESSION_FINALIZED` outbox event. Missing marks are rejected rather than interpreted as a status.
 
-Session, attendance-record, and outbox-event inserts share one serializable MySQL transaction. A failure in any insert rolls back the entire unit. The outbox payload contains stable session/offering/faculty identifiers, the occurrence time, affected student count, and minimal metadata; it does not copy the attendance records. MongoDB delivery is outside this transaction and deferred to Stage 7C.
+Session, attendance-record, and outbox-event inserts share one serializable MySQL transaction. A failure in any insert rolls back the entire unit. The outbox payload contains stable session/offering/faculty identifiers, the occurrence time, affected student count, and minimal metadata; it does not copy the attendance records. The standalone Stage 7C worker validates that payload and its event identity, then persists it to MongoDB outside this transaction. MongoDB uses a unique `eventId` index and insert-only upsert semantics. Identical existing documents are successful retries; conflicting documents are not overwritten and the SQL row stays pending. After persistence is confirmed, the worker conditionally sets `deliveredAt` only if it is still null. A failed SQL acknowledgement leaves the Mongo document intact and safely retryable. No retry columns or schema migration are needed.
 
 The database check ensures a finalized session has a `finalizedAt` timestamp and a draft/cancelled session does not. Query logic still filters on `AttendanceSession.status = 'FINALIZED'`. This stage treats finalized sessions as immutable: there is no attendance update action. A session with the same offering/date/topic is rejected by the service within a serializable transaction. The existing index is not a unique key because an offering can hold multiple distinct topics on the same date.
 
