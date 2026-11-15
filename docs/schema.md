@@ -22,7 +22,7 @@ All IDs are UUID strings stored as `CHAR(36)`. Prisma supplies UUIDs for client-
 | `enrollments` | Student registration for an offering: `id` PK, `offeringId` FK, `studentId` FK, `enrolledAt`, `status`. `(offeringId, studentId)` is unique. Status is `ACTIVE`, `DROPPED`, or `COMPLETED`. |
 | `attendance_sessions` | Class meeting: `id` PK, `offeringId` FK, `sessionDate`, optional `topic`, `status`, `finalizedAt`, `createdBy` FK, timestamps. Status is `DRAFT`, `FINALIZED`, or `CANCELLED`. A database check requires `finalizedAt` exactly when status is `FINALIZED`. |
 | `attendance_records` | Per-student result: `id` PK, `sessionId` FK, `studentId` FK, `status`, `markedAt`, `markedBy` FK, optional `remarks`. `(sessionId, studentId)` is unique. Status is `PRESENT`, `ABSENT`, or `EXCUSED`. |
-| `outbox_events` | Future delivery queue: `id` PK, unique `eventId`, `eventType`, `occurredAt`, optional actor/student/offering/session/record FKs, JSON `payload`, optional `deliveredAt`, `createdAt`. It is only the SQL outbox model; there is no processor yet. |
+| `outbox_events` | Pending event delivery queue: `id` PK, unique `eventId`, `eventType`, `occurredAt`, optional actor/student/offering/session/record FKs, JSON `payload`, optional `deliveredAt`, `createdAt`. A null `deliveredAt` means pending. Stage 7B writes attendance-finalization events here; the Stage 7C processor is not implemented. |
 
 The profile role and `User.role` must agree (for example, a `STUDENT` user has a student profile). That cross-table business rule is enforced by the future account-provisioning service; a simple FK cannot express it. The schema allows an `ADMIN` user to have neither profile.
 
@@ -79,7 +79,9 @@ Indexes created by unique keys are not duplicated with identical ordinary indexe
 
 ## Attendance calculation rules
 
-Only records belonging to `FINALIZED` sessions are eligible for attendance calculations. `PRESENT` contributes to attended classes; `ABSENT` contributes to classes held and not attended. `EXCUSED` is excluded from both the numerator and denominator. Stage 5 creates each session and one record for every ACTIVE enrollee in the same transaction, then finalizes the session. Missing marks are rejected rather than interpreted as a status.
+Only records belonging to `FINALIZED` sessions are eligible for attendance calculations. `PRESENT` contributes to attended classes; `ABSENT` contributes to classes held and not attended. `EXCUSED` is excluded from both the numerator and denominator. Stage 5 creates each session and one record for every ACTIVE enrollee in the same transaction, then finalizes the session. Stage 7B extends this transaction to insert exactly one `ATTENDANCE_SESSION_FINALIZED` outbox event. Missing marks are rejected rather than interpreted as a status.
+
+Session, attendance-record, and outbox-event inserts share one serializable MySQL transaction. A failure in any insert rolls back the entire unit. The outbox payload contains stable session/offering/faculty identifiers, the occurrence time, affected student count, and minimal metadata; it does not copy the attendance records. MongoDB delivery is outside this transaction and deferred to Stage 7C.
 
 The database check ensures a finalized session has a `finalizedAt` timestamp and a draft/cancelled session does not. Query logic still filters on `AttendanceSession.status = 'FINALIZED'`. This stage treats finalized sessions as immutable: there is no attendance update action. A session with the same offering/date/topic is rejected by the service within a serializable transaction. The existing index is not a unique key because an offering can hold multiple distinct topics on the same date.
 

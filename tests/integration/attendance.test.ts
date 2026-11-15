@@ -36,6 +36,7 @@ test("MySQL attendance integration: seeded relationships, uniqueness, and rollba
 }, async (t) => {
   if (!testPrisma) return;
   const db = testPrisma;
+  const { insertFinalizedSessionWithOutbox } = await import("@/dal/attendance/commands");
 
   const facultyOneUser = await db.user.findUniqueOrThrow({
     where: { email: "faculty.one@attendance-demo.test" },
@@ -143,5 +144,153 @@ test("MySQL attendance integration: seeded relationships, uniqueness, and rollba
 
     assert.equal(await db.attendanceSession.count({ where: { offeringId: offering.id, topic } }), beforeSessions);
     assert.equal(await db.attendanceRecord.count({ where: { session: { offeringId: offering.id, topic } } }), beforeRecords);
+  });
+
+  await t.test("finalized attendance and exactly one pending outbox event commit together without MongoDB", async () => {
+    const facultyProfile = facultyOneUser.facultyProfile;
+    assert.ok(facultyProfile);
+    const enrollments = await db.enrollment.findMany({
+      where: { offeringId: offering.id, status: "ACTIVE" },
+      select: { studentId: true },
+      orderBy: { studentId: "asc" },
+    });
+    const topic = `outbox-success-${randomUUID()}`;
+    const eventId = randomUUID();
+    const records = enrollments.map(({ studentId }, index) => ({
+      studentId,
+      status: index % 2 === 0 ? "PRESENT" as const : "ABSENT" as const,
+    }));
+    let sessionId: string | undefined;
+    const originalMongoUri = process.env.MONGODB_URI;
+    process.env.MONGODB_URI = "mongodb://127.0.0.1:1";
+
+    try {
+      sessionId = await db.$transaction((tx) => insertFinalizedSessionWithOutbox(tx, {
+        offeringId: offering.id,
+        sessionDate: new Date(offering.term.startDate),
+        topic,
+        createdBy: facultyOneUser.id,
+        facultyId: facultyProfile.id,
+        records,
+      }, eventId));
+
+      const savedSession = await db.attendanceSession.findUniqueOrThrow({
+        where: { id: sessionId },
+        select: {
+          status: true,
+          records: { select: { studentId: true, status: true } },
+          outboxEvents: {
+            select: { eventId: true, eventType: true, deliveredAt: true, payload: true },
+          },
+        },
+      });
+      assert.equal(savedSession.status, "FINALIZED");
+      assert.equal(savedSession.records.length, records.length);
+      assert.deepEqual(
+        savedSession.records.map(({ studentId, status }) => ({ studentId, status })).sort((a, b) => a.studentId.localeCompare(b.studentId)),
+        records.slice().sort((a, b) => a.studentId.localeCompare(b.studentId)),
+      );
+      assert.equal(savedSession.outboxEvents.length, 1);
+      assert.equal(savedSession.outboxEvents[0].eventId, eventId);
+      assert.equal(savedSession.outboxEvents[0].eventType, "ATTENDANCE_SESSION_FINALIZED");
+      assert.equal(savedSession.outboxEvents[0].deliveredAt, null);
+      assert.deepEqual(savedSession.outboxEvents[0].payload, {
+        eventId,
+        eventType: "ATTENDANCE_SESSION_FINALIZED",
+        occurredAt: (await db.attendanceSession.findUniqueOrThrow({
+          where: { id: sessionId },
+          select: { finalizedAt: true },
+        })).finalizedAt?.toISOString(),
+        sessionId,
+        offeringId: offering.id,
+        facultyId: facultyProfile.id,
+        affectedStudentCount: records.length,
+        metadata: { schemaVersion: 1, sessionDate: new Date(offering.term.startDate).toISOString().slice(0, 10) },
+      });
+    } finally {
+      try {
+        if (sessionId) {
+          await db.$transaction(async (tx) => {
+            await tx.outboxEvent.deleteMany({ where: { sessionId } });
+            await tx.attendanceRecord.deleteMany({ where: { sessionId } });
+            await tx.attendanceSession.deleteMany({ where: { id: sessionId } });
+          });
+        }
+      } finally {
+        if (originalMongoUri === undefined) {
+          delete process.env.MONGODB_URI;
+        } else {
+          process.env.MONGODB_URI = originalMongoUri;
+        }
+      }
+    }
+  });
+
+  await t.test("attendance record failure leaves no session, marks, or outbox event", async () => {
+    const facultyProfile = facultyOneUser.facultyProfile;
+    assert.ok(facultyProfile);
+    const topic = `outbox-record-failure-${randomUUID()}`;
+    await assert.rejects(db.$transaction((tx) => insertFinalizedSessionWithOutbox(tx, {
+      offeringId: offering.id,
+      sessionDate: new Date(offering.term.startDate),
+      topic,
+      createdBy: facultyOneUser.id,
+      facultyId: facultyProfile.id,
+      records: [{ studentId: randomUUID(), status: "PRESENT" }],
+    }, randomUUID())));
+
+    assert.equal(await db.attendanceSession.count({ where: { offeringId: offering.id, topic } }), 0);
+    assert.equal(await db.attendanceRecord.count({ where: { session: { offeringId: offering.id, topic } } }), 0);
+    assert.equal(await db.outboxEvent.count({
+      where: { session: { offeringId: offering.id, topic }, eventType: "ATTENDANCE_SESSION_FINALIZED" },
+    }), 0);
+  });
+
+  await t.test("outbox uniqueness failure rolls back the session and attendance records", async () => {
+    const facultyProfile = facultyOneUser.facultyProfile;
+    assert.ok(facultyProfile);
+    const eventId = randomUUID();
+    const topic = `outbox-insert-failure-${randomUUID()}`;
+    await db.outboxEvent.create({
+      data: { eventId, eventType: "TEST_IDEMPOTENCY_SENTINEL", payload: { testOnly: true } },
+    });
+
+    try {
+      const enrollments = await db.enrollment.findMany({
+        where: { offeringId: offering.id, status: "ACTIVE" },
+        select: { studentId: true },
+      });
+      await assert.rejects(db.$transaction((tx) => insertFinalizedSessionWithOutbox(tx, {
+        offeringId: offering.id,
+        sessionDate: new Date(offering.term.startDate),
+        topic,
+        createdBy: facultyOneUser.id,
+        facultyId: facultyProfile.id,
+        records: enrollments.map(({ studentId }) => ({ studentId, status: "PRESENT" as const })),
+      }, eventId)));
+
+      assert.equal(await db.attendanceSession.count({ where: { offeringId: offering.id, topic } }), 0);
+      assert.equal(await db.attendanceRecord.count({ where: { session: { offeringId: offering.id, topic } } }), 0);
+      assert.equal(await db.outboxEvent.count({ where: { eventId } }), 1);
+    } finally {
+      await db.outboxEvent.deleteMany({ where: { eventId } });
+    }
+  });
+
+  await t.test("the seeded offering's existing finalized date/topic is still detected as a duplicate", async () => {
+    const existing = await db.attendanceSession.findFirstOrThrow({
+      where: { offeringId: offering.id, status: "FINALIZED" },
+      select: { sessionDate: true, topic: true },
+    });
+    const duplicate = await db.attendanceSession.findFirst({
+      where: {
+        offeringId: offering.id,
+        sessionDate: existing.sessionDate,
+        topic: existing.topic,
+        status: { in: ["DRAFT", "FINALIZED"] },
+      },
+      select: { id: true },
+    });
+    assert.ok(duplicate);
   });
 });

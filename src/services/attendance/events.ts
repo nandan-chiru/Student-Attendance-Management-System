@@ -4,13 +4,13 @@ import { z } from "zod";
 export const ATTENDANCE_EVENTS_COLLECTION = "attendance_events";
 
 /**
- * Contract for a later Stage 7B publisher. This records event context only;
- * attendance rows remain authoritative in MySQL and are never copied here.
+ * Contract for the Stage 7B SQL outbox event and future Stage 7C publisher.
+ * Attendance rows remain authoritative in MySQL and are never copied here.
  */
 export const attendanceSessionFinalizedEventSchema = z.object({
   eventId: z.string().uuid(),
   eventType: z.literal("ATTENDANCE_SESSION_FINALIZED"),
-  occurredAt: z.date(),
+  occurredAt: z.iso.datetime(),
   sessionId: z.string().uuid(),
   offeringId: z.string().uuid(),
   facultyId: z.string().uuid(),
@@ -22,3 +22,24 @@ export const attendanceSessionFinalizedEventSchema = z.object({
 }).strict();
 
 export type AttendanceSessionFinalizedEvent = z.infer<typeof attendanceSessionFinalizedEventSchema>;
+
+export function createAttendanceSessionFinalizedEvent(input: {
+  eventId: string;
+  occurredAt: Date;
+  sessionId: string;
+  offeringId: string;
+  facultyId: string;
+  affectedStudentCount: number;
+  sessionDate: string;
+}): AttendanceSessionFinalizedEvent {
+  return attendanceSessionFinalizedEventSchema.parse({
+    eventId: input.eventId,
+    eventType: "ATTENDANCE_SESSION_FINALIZED",
+    occurredAt: input.occurredAt.toISOString(),
+    sessionId: input.sessionId,
+    offeringId: input.offeringId,
+    facultyId: input.facultyId,
+    affectedStudentCount: input.affectedStudentCount,
+    metadata: { schemaVersion: 1, sessionDate: input.sessionDate },
+  });
+}

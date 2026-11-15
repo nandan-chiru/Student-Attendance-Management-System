@@ -56,7 +56,6 @@ export async function findFacultySessionOfferingId(sessionId: string) {
     select: { offeringId: true },
   });
 }
-
 export async function getFacultySessionDetails(sessionId: string) {
   return prisma.attendanceSession.findUnique({
     where: { id: sessionId },
@@ -169,38 +168,4 @@ export async function findDuplicateAttendanceSession(
     },
     select: { id: true },
   });
-}
-
-export async function insertFinalizedSession(
-  tx: Prisma.TransactionClient,
-  input: {
-    offeringId: string;
-    sessionDate: Date;
-    topic: string | null;
-    createdBy: string;
-    records: Array<{ studentId: string; status: "PRESENT" | "ABSENT" | "EXCUSED" }>;
-  },
-) {
-  const session = await tx.attendanceSession.create({
-    data: {
-      offeringId: input.offeringId,
-      sessionDate: input.sessionDate,
-      topic: input.topic,
-      status: "FINALIZED",
-      finalizedAt: new Date(),
-      createdBy: input.createdBy,
-    },
-    select: { id: true },
-  });
-
-  await tx.attendanceRecord.createMany({
-    data: input.records.map(({ studentId, status }) => ({
-      sessionId: session.id,
-      studentId,
-      status,
-      markedBy: input.createdBy,
-    })),
-  });
-
-  return session.id;
 }

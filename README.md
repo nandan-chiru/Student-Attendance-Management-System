@@ -16,7 +16,7 @@ Authentication uses Auth.js Credentials with JWT-backed sessions. Passwords are 
 
 MySQL is the primary and canonical relational source of truth for users and profiles, academic terms, courses and offerings, enrollments, attendance sessions, attendance records, and the SQL outbox. Attendance percentages will be calculated only from attendance records in finalized sessions.
 
-MySQL remains the system of record. MongoDB is the secondary NoSQL store planned for immutable attendance event/audit history and future event-based aggregation/reporting. Attendance sessions, attendance records, and percentages are not duplicated there. The MongoDB driver and event contract are present, but no collection, event writes, SQL outbox workflow, or synchronization worker is implemented yet. The existing Prisma `OutboxEvent` model is not active in attendance submission.
+MySQL remains the system of record. MongoDB is the secondary NoSQL store planned for immutable attendance event/audit history and future event-based aggregation/reporting. Attendance sessions, attendance records, and percentages are not duplicated there. The MongoDB driver and event contract are present. Attendance finalization writes an event to the existing SQL `OutboxEvent` table in the same MySQL transaction as its session and records. No MongoDB collection writes, delivery worker, or synchronization process is implemented yet.
 
 ## Local prerequisites
 
@@ -72,11 +72,11 @@ MongoDB uses the optional server-only `MONGODB_URI` variable. The shared connect
 
 ## Attendance workflow (Stage 5)
 
-Faculty see only offerings assigned through `OfferingFaculty`. For an offering, the active enrollment roster is loaded from MySQL. Faculty select a valid date within the offering term and mark every active enrollee PRESENT, ABSENT, or EXCUSED. One serializable MySQL transaction creates the session as `FINALIZED` and inserts the complete roster of attendance records. Duplicate date/topic sessions and roster mismatches are rejected. Finalized history is read-only in this stage.
+Faculty see only offerings assigned through `OfferingFaculty`. For an offering, the active enrollment roster is loaded from MySQL. Faculty select a valid date within the offering term and mark every active enrollee PRESENT, ABSENT, or EXCUSED. One serializable MySQL transaction creates the session as `FINALIZED`, inserts the complete roster of attendance records, and writes exactly one pending `ATTENDANCE_SESSION_FINALIZED` outbox event. Duplicate date/topic sessions and roster mismatches are rejected; any insert failure rolls back all three kinds of rows. Finalized history is read-only in this stage.
 
 Students see only their own ACTIVE or COMPLETED enrollments, finalized session history, and per-course/overall counts. The profile ID is derived from the authenticated server-side user. Attendance is calculated from finalized MySQL records: PRESENT counts attended, ABSENT counts held but not attended, and EXCUSED is excluded from both. With no counted marks the safe percentage is `0%`; values are rounded to two decimal places. No percentage is stored in the database.
 
-Faculty pages use `/faculty`; session history details are at `/faculty/sessions/[sessionId]`. Student attendance is at `/student`. Session creation uses a validated Server Action; reads are server-side Prisma queries. The admin page remains a protected placeholder. No MongoDB event workflow is implemented.
+Faculty pages use `/faculty`; session history details are at `/faculty/sessions/[sessionId]`. Student attendance is at `/student`. Session creation uses a validated Server Action; reads are server-side Prisma queries. The admin page remains a protected placeholder. Outbox delivery to MongoDB is deferred to Stage 7C.
 
 ## Attendance risk and recovery planner (Stage 6)
 
@@ -110,4 +110,4 @@ tests/integration/        Optional isolated MySQL integrity/transaction tests
 
 ## Current stage boundary
 
-Stage 7A adds the optional MongoDB connection foundation, health check, and validated event contract. Stage 6 attendance entry, finalized session history, student attendance summaries, server-side role-scoped attendance risk analysis, and recovery guidance remain MySQL-backed. MongoDB event writes, the Stage 7B SQL outbox publisher/worker, broader analytics dashboards, and admin attendance tools remain out of scope.
+Stage 7B adds the transactional SQL outbox record to attendance finalization. Stage 7A provides the optional MongoDB connection, health check, and event contract. Stage 6 attendance entry, finalized session history, student attendance summaries, server-side role-scoped attendance risk analysis, and recovery guidance remain MySQL-backed. MongoDB delivery/retries, broader analytics dashboards, and admin attendance tools remain out of scope.

@@ -34,11 +34,34 @@ The official MongoDB Node.js driver is reused through `src/lib/db/mongodb.ts`, w
 
 The future `attendance_events` collection is append-only and will enforce a unique index on `eventId` for idempotent identity. The Stage 7A contract defines `ATTENDANCE_SESSION_FINALIZED` with stable MySQL `sessionId`, `offeringId`, and `facultyId`, an event time, affected student count, and small schema-version/session-date metadata. It intentionally excludes names, emails, attendance rows, credentials, and other unnecessary personal data. No collection or index is created in this stage, and no events are written.
 
-The existing SQL `OutboxEvent` model is not used by Stage 7A. Future Stage 7B will implement the SQL outbox pattern: record an event in the same MySQL transaction as the canonical attendance change, then publish it to MongoDB with idempotent delivery. MongoDB failure must not roll back or block ordinary MySQL attendance operations.
+Stage 7B reuses the existing SQL `OutboxEvent` model. Its event row is written atomically with attendance finalization; MongoDB delivery remains deferred to Stage 7C.
 
 ## Consistency boundary
 
-MySQL remains authoritative for current attendance state. In Stage 7B, attendance changes and an event-outbox record will be committed together in a MySQL transaction. A separate delivery process can copy outbox events to MongoDB and safely retry using a unique event identifier. This avoids treating two independent database writes as one atomic transaction.
+MySQL remains authoritative for current attendance state. Attendance session finalization, its records, and its `OutboxEvent` are committed in one MySQL transaction. MongoDB is never written inside the transaction. A MongoDB outage therefore cannot roll back or block a successful MySQL attendance transaction; the outbox row remains pending (`deliveredAt = NULL`) for later delivery. Stage 7C will implement delivery and retry using the unique event identifier.
+
+## Transactional SQL outbox (Stage 7B)
+
+```text
+Faculty
+  ↓
+Attendance finalization request
+  ↓
+Single MySQL transaction
+  ├── AttendanceSession
+  ├── AttendanceRecords
+  └── OutboxEvent (pending)
+        ↓
+      COMMIT
+        ↓
+Future Stage 7C delivery and retry
+        ↓
+MongoDB
+```
+
+The server creates one `ATTENDANCE_SESSION_FINALIZED` event after inserting the finalized session and its complete attendance roster. The shared TypeScript event contract supplies the minimal payload; the same event ID is stored in the unique `OutboxEvent.eventId` column and payload. Relational columns record the actor, offering, session, event type, occurrence time, and delivery timestamp. The payload contains stable session/offering/faculty IDs, event time, affected student count, and minimal schema/date metadata. It excludes names, emails, attendance records, credentials, and tokens.
+
+Any session, record, or outbox insert error rejects the transaction and rolls back all of its writes. The Server Action returns its existing generic save failure for unexpected persistence errors; database details are not sent to the browser. The attendance transaction imports no MongoDB client and performs no network call. The outbox row remains pending until Stage 7C processes it; there is no worker, retry loop, MongoDB insert, collection, or audit UI in Stage 7B.
 
 ## Application layers
 
@@ -74,6 +97,6 @@ This decision-support feature goes beyond CRUD by analyzing historical marks to 
 
 ## Current implementation boundary
 
-Stage 5 faculty attendance creation performs a serializable MySQL transaction: recheck the offering assignment and term, load the active roster, reject incomplete or duplicate marks, create a FINALIZED session, and insert all records. Any failure rolls back both the session and its records. Finalized sessions are read-only in the UI and there is no update action. Student views derive only that student's marks from FINALIZED sessions; percentages are calculated at request time and are never stored.
+Faculty attendance finalization performs a serializable MySQL transaction: recheck the offering assignment and term, load the active roster, reject incomplete or duplicate marks, create a FINALIZED session, insert all records, then insert exactly one pending `OutboxEvent`. Any failure rolls back the session, records, and event together. Finalized sessions are read-only in the UI and there is no update action. Student views derive only that student's marks from FINALIZED sessions; percentages are calculated at request time and are never stored.
 
-The admin page remains a protected placeholder. A broader analytics dashboard, MongoDB event processing, and the outbox worker remain deferred. Integration tests only connect when `ATTENDANCE_TEST_DATABASE_URL` targets a separate database whose name ends in `_test`; they never use the application's `DATABASE_URL`.
+The admin page remains a protected placeholder. A broader analytics dashboard and Stage 7C MongoDB delivery/retry worker remain deferred. Integration tests only connect when `ATTENDANCE_TEST_DATABASE_URL` targets a separate database whose name ends in `_test`; they never use the application's `DATABASE_URL`.

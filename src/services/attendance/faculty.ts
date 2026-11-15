@@ -1,13 +1,13 @@
 import { Prisma } from "@/generated/prisma/client";
 import type { AttendanceStatus } from "@/generated/prisma/enums";
 import { prisma } from "@/lib/db/prisma";
+import { insertFinalizedSessionWithOutbox } from "@/dal/attendance/commands";
 import {
   findActiveEnrollmentStudentIds,
   findAssignedOffering,
   findDuplicateAttendanceSession,
   findFacultySessionOfferingId,
   getFacultySessionDetails as readFacultySessionDetails,
-  insertFinalizedSession,
   listFacultyOfferings,
 } from "@/dal/attendance/queries";
 import { requireFaculty, requireFacultyOffering } from "@/auth/authorization";
@@ -113,11 +113,12 @@ export async function createAttendanceSession(input: unknown) {
         throw new AttendanceConflictError("A session with this date and topic already exists for the offering.");
       }
 
-      return insertFinalizedSession(tx, {
+      return insertFinalizedSessionWithOutbox(tx, {
         offeringId: parsed.data.offeringId,
         sessionDate,
         topic: parsed.data.topic,
         createdBy: faculty.id,
+        facultyId: faculty.facultyProfileId,
         records: parsed.data.records,
       });
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });

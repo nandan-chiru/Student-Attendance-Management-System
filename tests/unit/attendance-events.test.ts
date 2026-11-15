@@ -2,13 +2,14 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   ATTENDANCE_EVENTS_COLLECTION,
+  createAttendanceSessionFinalizedEvent,
   attendanceSessionFinalizedEventSchema,
 } from "@/services/attendance/events";
 
 const validEvent = {
   eventId: "f6f2bb58-f67f-4c5e-92ed-d8b757d81c66",
   eventType: "ATTENDANCE_SESSION_FINALIZED",
-  occurredAt: new Date("2026-11-15T10:30:00.000Z"),
+  occurredAt: "2026-11-15T10:30:00.000Z",
   sessionId: "a2c17dd0-a37c-4d02-a48f-e5ed0d81bc78",
   offeringId: "c334b574-9e60-4d60-b251-3c0c82659412",
   facultyId: "ce48eae5-7a4b-441b-b4dd-422f0ecba4f4",
@@ -37,4 +38,15 @@ test("attendance event contract rejects extra personal data fields", () => {
     ...validEvent,
     studentEmail: "student@example.test",
   }).success, false);
+});
+
+test("event factory uses the shared contract and serializes the event time", () => {
+  const event = createAttendanceSessionFinalizedEvent({
+    ...validEvent,
+    occurredAt: new Date(validEvent.occurredAt),
+    sessionDate: validEvent.metadata.sessionDate,
+  });
+  assert.equal(event.eventType, "ATTENDANCE_SESSION_FINALIZED");
+  assert.equal(event.occurredAt, "2026-11-15T10:30:00.000Z");
+  assert.deepEqual(event.metadata, { schemaVersion: 1, sessionDate: "2026-11-15" });
 });
