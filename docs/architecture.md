@@ -24,7 +24,7 @@ MySQL + MongoDB
 
 MySQL is the canonical relational database for users and profiles, academic terms, courses, course offerings, enrollments, attendance sessions, attendance records, and the SQL outbox. Relationships and integrity are represented by primary keys, foreign keys, unique constraints, enums, indexes, and MySQL checks in the initial migration.
 
-Attendance percentages and shortage analysis will be calculated from canonical MySQL attendance records. MongoDB will not store a competing attendance total.
+Attendance percentages and shortage analysis are calculated from canonical MySQL attendance records. MongoDB does not store a competing attendance total.
 
 ### MongoDB (Stage 7A foundation)
 
@@ -125,4 +125,4 @@ This decision-support feature goes beyond CRUD by analyzing historical marks to 
 
 Faculty attendance finalization performs a serializable MySQL transaction: recheck the offering assignment and term, load the active roster, reject incomplete or duplicate marks, create a FINALIZED session, insert all records, then insert exactly one pending `OutboxEvent`. Any failure rolls back the session, records, and event together. Finalized sessions are read-only in the UI and there is no update action. Student views derive only that student's marks from FINALIZED sessions; percentages are calculated at request time and are never stored.
 
-Broader analytics dashboards beyond the event audit views remain deferred. Integration tests only connect when `ATTENDANCE_TEST_DATABASE_URL` targets a separate database whose name ends in `_test`; they never use the application's `DATABASE_URL`.
+Role-based student, faculty, and admin attendance dashboards are implemented in Stage 8 and documented in this architecture. Integration tests only connect when `ATTENDANCE_TEST_DATABASE_URL` targets a separate database whose name ends in `_test`; they never use the application's `DATABASE_URL`. See `docs/testing.md` for the current test coverage and manual verification checklist.
