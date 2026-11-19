@@ -1,0 +1,202 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+enum UserRole {
+  STUDENT
+  FACULTY
+  ADMIN
+}
+
+enum EnrollmentStatus {
+  ACTIVE
+  DROPPED
+  COMPLETED
+}
+
+enum AttendanceSessionStatus {
+  DRAFT
+  FINALIZED
+  CANCELLED
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  EXCUSED
+}
+
+model User {
+  id                        String              @id @default(uuid()) @db.Char(36)
+  name                      String              @db.VarChar(120)
+  email                     String              @unique @db.VarChar(254)
+  passwordHash              String              @db.VarChar(255)
+  role                      UserRole            @default(STUDENT)
+  createdAt                 DateTime            @default(now()) @db.DateTime(3)
+  updatedAt                 DateTime            @updatedAt @db.DateTime(3)
+  studentProfile            StudentProfile?
+  facultyProfile            FacultyProfile?
+  createdAttendanceSessions AttendanceSession[] @relation("AttendanceSessionCreator")
+  markedAttendanceRecords   AttendanceRecord[]  @relation("AttendanceRecordMarker")
+  actorOutboxEvents         OutboxEvent[]       @relation("OutboxActor")
+
+  @@map("users")
+}
+
+model StudentProfile {
+  id                 String             @id @default(uuid()) @db.Char(36)
+  userId             String             @unique @db.Char(36)
+  registrationNumber String             @unique @db.VarChar(40)
+  department         String             @db.VarChar(120)
+  semester           Int
+  user               User               @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  enrollments        Enrollment[]
+  attendanceRecords  AttendanceRecord[]
+  outboxEvents       OutboxEvent[]      @relation("OutboxStudent")
+
+  @@index([department, semester])
+  @@map("student_profiles")
+}
+
+model FacultyProfile {
+  id                  String            @id @default(uuid()) @db.Char(36)
+  userId              String            @unique @db.Char(36)
+  employeeId          String            @unique @db.VarChar(40)
+  department          String            @db.VarChar(120)
+  user                User              @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  offeringAssignments OfferingFaculty[]
+
+  @@index([department])
+  @@map("faculty_profiles")
+}
+
+model AcademicTerm {
+  id              String           @id @default(uuid()) @db.Char(36)
+  name            String           @db.VarChar(100)
+  startDate       DateTime         @db.Date
+  endDate         DateTime         @db.Date
+  isActive        Boolean          @default(false)
+  courseOfferings CourseOffering[]
+
+  @@index([isActive, startDate])
+  @@map("academic_terms")
+}
+
+model Course {
+  id              String           @id @default(uuid()) @db.Char(36)
+  code            String           @unique @db.VarChar(30)
+  name            String           @db.VarChar(150)
+  credits         Int
+  courseOfferings CourseOffering[]
+
+  @@map("courses")
+}
+
+model CourseOffering {
+  id                  String              @id @default(uuid()) @db.Char(36)
+  courseId            String              @db.Char(36)
+  termId              String              @db.Char(36)
+  sectionCode         String              @db.VarChar(20)
+  attendanceThreshold Decimal             @default(75.00) @db.Decimal(5, 2)
+  course              Course              @relation(fields: [courseId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  term                AcademicTerm        @relation(fields: [termId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  facultyAssignments  OfferingFaculty[]
+  enrollments         Enrollment[]
+  attendanceSessions  AttendanceSession[]
+  outboxEvents        OutboxEvent[]       @relation("OutboxOffering")
+
+  @@unique([courseId, termId, sectionCode])
+  @@index([termId, courseId])
+  @@map("course_offerings")
+}
+
+model OfferingFaculty {
+  offeringId String         @db.Char(36)
+  facultyId  String         @db.Char(36)
+  offering   CourseOffering @relation(fields: [offeringId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  faculty    FacultyProfile @relation(fields: [facultyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@id([offeringId, facultyId])
+  @@index([facultyId, offeringId])
+  @@map("offering_faculty")
+}
+
+model Enrollment {
+  id         String           @id @default(uuid()) @db.Char(36)
+  offeringId String           @db.Char(36)
+  studentId  String           @db.Char(36)
+  enrolledAt DateTime         @default(now()) @db.DateTime(3)
+  status     EnrollmentStatus @default(ACTIVE)
+  offering   CourseOffering   @relation(fields: [offeringId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  student    StudentProfile   @relation(fields: [studentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([offeringId, studentId])
+  @@index([studentId, status])
+  @@map("enrollments")
+}
+
+model AttendanceSession {
+  id           String                  @id @default(uuid()) @db.Char(36)
+  offeringId   String                  @db.Char(36)
+  sessionDate  DateTime                @db.Date
+  topic        String?                 @db.VarChar(200)
+  status       AttendanceSessionStatus @default(DRAFT)
+  finalizedAt  DateTime?               @db.DateTime(3)
+  createdBy    String                  @db.Char(36)
+  createdAt    DateTime                @default(now()) @db.DateTime(3)
+  updatedAt    DateTime                @updatedAt @db.DateTime(3)
+  offering     CourseOffering          @relation(fields: [offeringId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  creator      User                    @relation("AttendanceSessionCreator", fields: [createdBy], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  records      AttendanceRecord[]
+  outboxEvents OutboxEvent[]           @relation("OutboxSession")
+
+  @@index([offeringId, sessionDate])
+  @@map("attendance_sessions")
+}
+
+model AttendanceRecord {
+  id           String            @id @default(uuid()) @db.Char(36)
+  sessionId    String            @db.Char(36)
+  studentId    String            @db.Char(36)
+  status       AttendanceStatus
+  markedAt     DateTime          @default(now()) @db.DateTime(3)
+  markedBy     String            @db.Char(36)
+  remarks      String?           @db.Text
+  session      AttendanceSession @relation(fields: [sessionId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  student      StudentProfile    @relation(fields: [studentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  marker       User              @relation("AttendanceRecordMarker", fields: [markedBy], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  outboxEvents OutboxEvent[]     @relation("OutboxAttendanceRecord")
+
+  @@unique([sessionId, studentId])
+  @@index([studentId, sessionId])
+  @@map("attendance_records")
+}
+
+model OutboxEvent {
+  id                 String             @id @default(uuid()) @db.Char(36)
+  eventId            String             @unique @default(uuid()) @db.Char(36)
+  eventType          String             @db.VarChar(100)
+  occurredAt         DateTime           @default(now()) @db.DateTime(3)
+  actorUserId        String?            @db.Char(36)
+  studentId          String?            @db.Char(36)
+  offeringId         String?            @db.Char(36)
+  sessionId          String?            @db.Char(36)
+  attendanceRecordId String?            @db.Char(36)
+  payload            Json
+  deliveredAt        DateTime?          @db.DateTime(3)
+  createdAt          DateTime           @default(now()) @db.DateTime(3)
+  actor              User?              @relation("OutboxActor", fields: [actorUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  student            StudentProfile?    @relation("OutboxStudent", fields: [studentId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  offering           CourseOffering?    @relation("OutboxOffering", fields: [offeringId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  session            AttendanceSession? @relation("OutboxSession", fields: [sessionId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  attendanceRecord   AttendanceRecord?  @relation("OutboxAttendanceRecord", fields: [attendanceRecordId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([deliveredAt, createdAt])
+  @@index([eventType, occurredAt])
+  @@map("outbox_events")
+}
